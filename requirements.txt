@@ -153,7 +153,7 @@ torchaudio==2.1.1
 torchmetrics==1.9.0
 torchvision==0.16.1
 tqdm==4.66.1
-transformers==4.39.3
+transformers==4.53.0
 triton==2.1.0
 typer==0.24.1
 typing-inspection==0.4.2
