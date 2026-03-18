@@ -146,7 +146,7 @@ tensorboardX==2.6.4
 threadpoolctl==3.6.0
 tokenizers==0.15.2
 tomlkit==0.12.0
-torch==2.1.1
+torch==2.8.0
 torch-audiomentations==0.12.0
 torch_pitch_shift==1.2.5
 torchaudio==2.1.1
