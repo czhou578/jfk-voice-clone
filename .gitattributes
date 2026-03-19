@@ -1,0 +1,2 @@
+*.wav filter=lfs diff=lfs merge=lfs -text
+jfk_dataset/wavs/*.wav filter=lfs diff=lfs merge=lfs -text
