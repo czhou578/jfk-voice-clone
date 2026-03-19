@@ -12,6 +12,7 @@ Usage:
 
 Requirements (install before running):
   pip install yt-dlp resemble-enhance whisperx torch torchaudio soundfile
+  git lfs install
 """
 
 import os
@@ -47,6 +48,10 @@ def download_audio(url: str, out_path: str) -> str:
     """Download best audio from YouTube, convert to 16kHz mono WAV."""
     print("\n[1/4] Downloading audio from YouTube...")
     wav_path = os.path.join(out_path, "raw_download.wav")
+    if os.path.exists(wav_path):
+        print(f"    ✓ Found existing raw audio at: {wav_path}, skipping download.")
+        return wav_path
+
     os.makedirs(out_path, exist_ok=True)
 
     cmd = [
@@ -77,6 +82,10 @@ def denoise_audio(input_wav: str, out_path: str) -> str:
     denoised_dir = os.path.join(out_path, "denoised")
     os.makedirs(denoised_dir, exist_ok=True)
     denoised_path = os.path.join(denoised_dir, "denoised.wav")
+
+    if os.path.exists(denoised_path):
+        print(f"    ✓ Found existing denoised audio at: {denoised_path}, skipping denoise.")
+        return denoised_path
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"    Using device: {device}")
