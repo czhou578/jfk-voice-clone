@@ -8,8 +8,7 @@ You need to install system-level dependencies for audio processing packages (lik
 Run the following commands in your terminal:
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libavfilter-dev libswscale-dev libswresample-dev
+apt-get update && apt-get install -y pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libavfilter-dev libswscale-dev libswresample-dev
 ```
 
 ## 2. Install Python Dependencies
