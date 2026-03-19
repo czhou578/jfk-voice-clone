@@ -20,10 +20,10 @@ set -e  # Exit on any error
 # ─────────────────────────────────────────────────────────────
 # CONFIG — edit these to match your paths
 # ─────────────────────────────────────────────────────────────
-DATASET_PATH="$HOME/jfk_dataset"       # folder containing wavs/ and metadata.csv
+DATASET_PATH="/workspace/jfk-voice-clone/jfk_dataset"
 DATASET_NAME="jfk"                     # name used internally by F5-TTS
-F5_REPO="$HOME/F5-TTS"                 # where to clone the repo
-CONDA_ENV="f5-tts"                     # conda environment name
+F5_REPO="/workspace/F5-TTS"            # where to clone the repo
+CONDA_ENV="f5-tts"                     # virtual environment name
 EPOCHS=10                              # start with 10, increase to 20-30 for better accent fidelity
 LEARNING_RATE=1e-5
 BATCH_SIZE=4000                        # safe for RTX 4090 24GB
@@ -58,21 +58,21 @@ echo "[2/6] Setting up python virtual environment: $CONDA_ENV"
 
 apt-get update -y && apt-get install -y python3-venv ffmpeg || true
 
-python3 -m venv "$HOME/$CONDA_ENV"
-source "$HOME/$CONDA_ENV/bin/activate"
+python3 -m venv "/workspace/$CONDA_ENV"
+source "/workspace/$CONDA_ENV/bin/activate"
 
 # Update pip
-pip install --upgrade pip
+pip install --no-cache-dir --upgrade pip
 
 # Install PyTorch with CUDA 12.1 (works for RTX 4090)
-pip install torch==2.4.0+cu121 torchaudio==2.4.0+cu121 \
+pip install --no-cache-dir torch==2.4.0+cu121 torchaudio==2.4.0+cu121 \
     --extra-index-url https://download.pytorch.org/whl/cu121
 
 # Install F5-TTS and its dependencies
-pip install -e .
+pip install --no-cache-dir -e .
 
 # Install accelerate for training
-pip install accelerate
+pip install --no-cache-dir accelerate
 
 echo "    ✓ Environment ready"
 
@@ -89,12 +89,27 @@ mkdir -p "$DATA_DIR"
 cp -r "$DATASET_PATH/wavs" "$DATA_DIR/wavs"
 cp "$DATASET_PATH/metadata.csv" "$DATA_DIR/metadata.csv"
 
-# Validate metadata format — F5-TTS expects: wavs/filename.wav|transcript
-# Your pipeline already outputs this format, but let's confirm
-echo "    Checking metadata format..."
+# Fix metadata format — F5-TTS expects absolute paths: /absolute/path.wav|transcript
+echo "    Converting metadata to use absolute paths..."
+python3 -c "
+import sys, os
+csv_path = sys.argv[1]
+wavs_dir = sys.argv[2]
+with open(csv_path, 'r', encoding='utf-8') as f:
+    lines = f.readlines()
+with open(csv_path, 'w', encoding='utf-8') as f:
+    f.write('audio_file|text\n')
+    for line in lines[1:]:
+        if '|' in line:
+            filename, text = line.split('|', 1)
+            if not filename.startswith('/'):
+                filename = os.path.join(wavs_dir, os.path.basename(filename))
+            f.write(f'{filename}|{text}')
+" "$DATA_DIR/metadata.csv" "$DATA_DIR/wavs"
+
 HEAD=$(head -2 "$DATA_DIR/metadata.csv")
 echo "    Sample rows:"
-echo "    $HEAD"
+echo "$HEAD"
 echo "    ✓ Dataset copied to $DATA_DIR"
 
 # ─────────────────────────────────────────────────────────────
@@ -108,7 +123,7 @@ echo "[4/6] Running F5-TTS dataset preparation (prepare_csv_wavs.py)..."
 cd "$F5_REPO/src/f5_tts/train/datasets"
 
 python prepare_csv_wavs.py \
-    "$DATA_DIR" \
+    "$DATA_DIR/metadata.csv" \
     "$DATA_DIR"
 
 # Verify output files were created
