@@ -17,9 +17,9 @@ import torch
 # ─────────────────────────────────────────────────────────────
 # CONFIG — edit these paths
 # ─────────────────────────────────────────────────────────────
-F5_REPO        = os.path.expanduser("~/F5-TTS")
+F5_REPO        = os.path.abspath(os.path.join(os.path.dirname(__file__), "F5-TTS"))
 CKPT_DIR       = os.path.join(F5_REPO, "ckpts/F5TTS_Base")
-DATASET_DIR    = os.path.expanduser("~/jfk_dataset")
+DATASET_DIR    = os.path.abspath(os.path.join(os.path.dirname(__file__), "jfk_dataset"))
 
 # A short clean JFK clip to use as voice reference during inference
 # Pick a 3-10 second clip from your dataset that sounds clear and representative

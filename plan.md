@@ -19,6 +19,12 @@ Once the system dependencies are installed, install the Python packages specifie
 pip install -r requirements.txt
 ```
 
+Also, make sure to set up dependencies for F5-TTS:
+
+```bash
+pip install -e ./F5-TTS
+```
+
 ## 3. Set Up Git LFS
 
 The models used in the pipeline may require Git Large File Storage (LFS) to download correctly. 

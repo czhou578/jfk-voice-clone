@@ -22,7 +22,7 @@ set -e  # Exit on any error
 # ─────────────────────────────────────────────────────────────
 DATASET_PATH="/workspace/jfk-voice-clone/jfk_dataset"
 DATASET_NAME="jfk"                     # name used internally by F5-TTS
-F5_REPO="/workspace/F5-TTS"            # where to clone the repo
+F5_REPO="/workspace/jfk-voice-clone/F5-TTS"    # where to clone the repo
 CONDA_ENV="f5-tts"                     # virtual environment name
 EPOCHS=10                              # start with 10, increase to 20-30 for better accent fidelity
 LEARNING_RATE=1e-5
@@ -43,10 +43,10 @@ echo "=============================================="
 echo ""
 echo "[1/6] Cloning F5-TTS (official repo)..."
 if [ ! -d "$F5_REPO" ]; then
-    git clone https://github.com/SWivid/F5-TTS.git "$F5_REPO"
+    echo "ERROR: F5-TTS repo missing"
+    exit 1
 else
-    echo "    ✓ Repo already exists, pulling latest..."
-    cd "$F5_REPO" && git pull
+    echo "    ✓ Repo existing, skipping pull to avoid detached HEAD detached issues..."
 fi
 cd "$F5_REPO"
 
