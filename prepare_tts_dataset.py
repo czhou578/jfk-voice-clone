@@ -29,7 +29,7 @@ import soundfile as sf
 def parse_args():
     parser = argparse.ArgumentParser(description="TTS Dataset Preparation Pipeline")
     parser.add_argument("--url",        required=True,  help="YouTube video URL")
-    parser.add_argument("--output",     default="./dataset", help="Output directory for final dataset")
+    parser.add_argument("--output",     default="./jfk_dataset", help="Output directory for final dataset")
     parser.add_argument("--speaker",    default="jfk",  help="Speaker name (used in filenames)")
     parser.add_argument("--model",      default="large-v2", help="Whisper model size (tiny/base/small/medium/large-v2)")
     parser.add_argument("--language",   default="en",   help="Language code (default: en)")
