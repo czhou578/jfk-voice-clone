@@ -72,7 +72,7 @@ pip install --no-cache-dir torch==2.4.0+cu121 torchaudio==2.4.0+cu121 \
 pip install --no-cache-dir -e .
 
 # Install accelerate for training
-pip install --no-cache-dir accelerate
+pip install --no-cache-dir accelerate tensorboard
 
 echo "    ✓ Environment ready"
 
@@ -174,6 +174,10 @@ echo "    ✓ Accelerate configured for single RTX 4090"
 echo ""
 echo "[6/6] Starting fine-tuning..."
 echo ""
+
+# Fix F5-TTS looking for _custom suffix
+ln -sfn "$DATA_DIR" "$F5_REPO/data/${DATASET_NAME}_custom"
+
 echo "  Settings:"
 echo "    Epochs            : $EPOCHS"
 echo "    Learning rate     : $LEARNING_RATE"
@@ -195,9 +199,11 @@ accelerate launch src/f5_tts/train/finetune_cli.py \
     --epochs          $EPOCHS \
     --num_warmup_updates 200 \
     --save_per_updates 1000 \
-    --last_per_steps  2000 \
+    --last_per_updates  2000 \
     --dataset_name    "$DATASET_NAME" \
-    --finetune        True \
+    --tokenizer       custom \
+    --tokenizer_path  "data/$DATASET_NAME/vocab.txt" \
+    --finetune \
     --logger          tensorboard
 
 echo ""
