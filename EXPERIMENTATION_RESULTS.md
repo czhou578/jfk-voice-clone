@@ -22,4 +22,4 @@
 | L1 | 5e-6 | More conservative, may need more epochs | Final loss = 0.571
 | L2 (baseline) | 1e-5 | Current setting |
 | L3 | 3e-5 | Faster convergence, risk of instability |Final loss = 0.528
-| L4 | 5e-5 | Aggressive — watch for loss spikes |
+| L4 | 5e-5 | Aggressive — watch for loss spikes | Final loss = 0.875
