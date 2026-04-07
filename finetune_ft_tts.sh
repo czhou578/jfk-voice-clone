@@ -25,7 +25,7 @@ DATASET_NAME="jfk"                     # name used internally by F5-TTS
 F5_REPO="/workspace/jfk-voice-clone/F5-TTS"    # where to clone the repo
 CONDA_ENV="f5-tts"                     # virtual environment name
 EPOCHS=30                              # start with 10, increase to 20-30 for better accent fidelity
-LEARNING_RATE=1e-5
+LEARNING_RATE=3e-5
 BATCH_SIZE=6000                        # safe for RTX 4090 24GB
 GRAD_ACCUM=1
 # Each experiment gets its own checkpoint dir; the trainer always reads/writes

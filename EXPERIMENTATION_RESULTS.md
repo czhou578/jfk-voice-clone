@@ -14,4 +14,12 @@
 | B1 | 2000 | ~12 GB | More updates per epoch, noisier gradients |
 | B2 (baseline) | 4000 | ~16 GB | Current setting | Already done - loss ~0.7 |
 | B3 | 6000 | ~20 GB | Smoother gradients, fewer updates per epoch | Final loss = 0.487 |
-| B4 | 8000 | ~23 GB | Max for 24GB GPU — may OOM, try with caution |
+
+### Round 3: Learning Rate Tuning (use best epoch + batch size)
+
+| Experiment | Learning Rate | Notes |
+|---|---|---|
+| L1 | 5e-6 | More conservative, may need more epochs | Final loss = 0.571
+| L2 (baseline) | 1e-5 | Current setting |
+| L3 | 3e-5 | Faster convergence, risk of instability |
+| L4 | 5e-5 | Aggressive — watch for loss spikes |
