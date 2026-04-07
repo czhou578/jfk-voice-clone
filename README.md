@@ -355,3 +355,6 @@ python run_inference.py --text "Ask not what your country can do for you."
 | Detached HEAD in F5-TTS | The script skips `git pull` intentionally to avoid this |
 | Poor voice quality | Increase `EPOCHS` to 20–30 for better accent fidelity |
 | Inference sounds robotic | Try a different/longer reference clip and increase `--nfe` to 64 |
+| CSV error? | Make sure to git lfs pull so that csv is populated with real data, and not just the lfs pointer |
+| No valid audio files were processed | Make sure that wav files are not git lfs pointers | 
+

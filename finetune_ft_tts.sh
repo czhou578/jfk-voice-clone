@@ -85,6 +85,26 @@ echo "[3/6] Preparing dataset..."
 DATA_DIR="$F5_REPO/data/${DATASET_NAME}"
 mkdir -p "$DATA_DIR"
 
+# Ensure Git LFS files are pulled (metadata.csv AND wavs may be tracked by LFS)
+echo "    Ensuring Git LFS files are pulled..."
+REPO_ROOT="$(git -C "$DATASET_PATH" rev-parse --show-toplevel 2>/dev/null || echo "$DATASET_PATH")"
+(cd "$REPO_ROOT" && git lfs install 2>/dev/null && git lfs pull 2>/dev/null) || true
+
+# Validate that metadata.csv is not a Git LFS pointer
+if head -1 "$DATASET_PATH/metadata.csv" | grep -q "^version https://git-lfs"; then
+    echo "ERROR: metadata.csv is a Git LFS pointer, not the actual file."
+    echo "       Run 'git lfs pull' in the dataset repo first."
+    exit 1
+fi
+
+# Validate that wav files are not Git LFS pointers
+SAMPLE_WAV=$(ls "$DATASET_PATH/wavs/"*.wav 2>/dev/null | head -1)
+if [ -n "$SAMPLE_WAV" ] && head -1 "$SAMPLE_WAV" | grep -q "^version https://git-lfs"; then
+    echo "ERROR: WAV files are Git LFS pointers, not actual audio."
+    echo "       Run 'git lfs pull' in the dataset repo first."
+    exit 1
+fi
+
 # Copy your wavs and metadata.csv into F5-TTS expected location
 cp -r "$DATASET_PATH/wavs" "$DATA_DIR/wavs"
 cp "$DATASET_PATH/metadata.csv" "$DATA_DIR/metadata.csv"

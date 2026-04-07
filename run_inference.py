@@ -18,12 +18,12 @@ import torch
 # CONFIG — edit these paths
 # ─────────────────────────────────────────────────────────────
 F5_REPO        = os.path.abspath(os.path.join(os.path.dirname(__file__), "F5-TTS"))
-CKPT_DIR       = os.path.join(F5_REPO, "ckpts/F5TTS_Base")
+CKPT_DIR       = "/root/F5-TTS-ckpts/jfk"
 DATASET_DIR    = os.path.abspath(os.path.join(os.path.dirname(__file__), "jfk_dataset"))
 
 # A short clean JFK clip to use as voice reference during inference
 # Pick a 3-10 second clip from your dataset that sounds clear and representative
-REFERENCE_CLIP = os.path.join(DATASET_DIR, "wavs/jfk_00001.wav")
+REFERENCE_CLIP = os.path.join(DATASET_DIR, "wavs/jfk_00002.wav")
 REFERENCE_TEXT = "We choose to go to the Moon in this decade and do the other things."
 
 OUTPUT_DIR     = "./jfk_outputs"
@@ -50,16 +50,25 @@ def find_checkpoint(ckpt_dir: str, step: str = None) -> str:
         raise FileNotFoundError(f"Checkpoint not found: {path}")
 
     # Find latest checkpoint automatically
-    pts = sorted(
-        [f for f in os.listdir(ckpt_dir) if f.startswith("model_") and f.endswith(".pt")],
+    # Filter to only numbered model checkpoints (model_2000.pt etc), exclude model_last.pt and pretrained_*
+    numbered_pts = sorted(
+        [f for f in os.listdir(ckpt_dir)
+         if f.startswith("model_") and f.endswith(".pt")
+         and not f.startswith("pretrained_")
+         and f != "model_last.pt"],
         key=lambda x: int(x.replace("model_", "").replace(".pt", ""))
     )
-    if not pts:
-        raise FileNotFoundError(f"No checkpoints found in {ckpt_dir}")
 
-    latest = os.path.join(ckpt_dir, pts[-1])
-    print(f"    Using checkpoint: {pts[-1]}")
-    return latest
+    # Prefer model_last.pt if it exists, otherwise use the latest numbered checkpoint
+    if os.path.exists(os.path.join(ckpt_dir, "model_last.pt")):
+        print("    Using checkpoint: model_last.pt")
+        return os.path.join(ckpt_dir, "model_last.pt")
+    elif numbered_pts:
+        latest = os.path.join(ckpt_dir, numbered_pts[-1])
+        print(f"    Using checkpoint: {numbered_pts[-1]}")
+        return latest
+    else:
+        raise FileNotFoundError(f"No checkpoints found in {ckpt_dir}")
 
 
 def main():
@@ -87,7 +96,7 @@ def main():
     # Load fine-tuned model
     print("\nLoading fine-tuned model...")
     tts = F5TTS(
-        model_type="F5-TTS",
+        model="F5TTS_Base",
         ckpt_file=ckpt_path,
         device=device,
     )
