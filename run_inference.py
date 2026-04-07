@@ -5,12 +5,21 @@ F5-TTS Inference — Fine-tuned JFK Voice
 Run this after fine-tuning to synthesize speech in JFK's voice.
 
 Usage:
+    # Single sentence
     python run_inference.py --text "Ask not what your country can do for you."
-    python run_inference.py --text "We choose to go to the Moon." --checkpoint 5000
+
+    # From a text file (one sentence per line, or paragraphs separated by blank lines)
+    python run_inference.py --file speech.txt
+
+    # With custom settings
+    python run_inference.py --file speech.txt --checkpoint 2000 --nfe 64
 """
 
 import argparse
 import os
+import re
+
+import numpy as np
 import soundfile as sf
 import torch
 
@@ -31,14 +40,47 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
 def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--text",       required=True, help="Text to synthesize")
-    parser.add_argument("--checkpoint", default=None,  help="Checkpoint step number (e.g. 5000). Defaults to latest.")
+    parser = argparse.ArgumentParser(
+        description="F5-TTS Inference — Synthesize speech in JFK's voice"
+    )
+    # Text input: either --text or --file (one required)
+    text_group = parser.add_mutually_exclusive_group(required=True)
+    text_group.add_argument("--text", help="Text to synthesize (single sentence)")
+    text_group.add_argument("--file", help="Path to a text file with sentences/paragraphs")
+
+    parser.add_argument("--checkpoint", default=None,  help="Checkpoint step number (e.g. 2000). Defaults to latest.")
     parser.add_argument("--ref_clip",   default=REFERENCE_CLIP, help="Path to reference WAV clip")
     parser.add_argument("--ref_text",   default=REFERENCE_TEXT, help="Transcript of reference clip")
-    parser.add_argument("--output",     default="output.wav", help="Output filename")
+    parser.add_argument("--output",     default="output.wav", help="Output filename (or prefix for multi-sentence)")
     parser.add_argument("--nfe",        type=int, default=32, help="NFE steps (higher = better quality, slower)")
+    parser.add_argument("--pause",      type=float, default=0.5, help="Pause in seconds between sentences (default: 0.5)")
+    parser.add_argument("--split",      action="store_true", help="Save each sentence as a separate WAV file")
     return parser.parse_args()
+
+
+def read_text_file(filepath):
+    """Read a text file and split into sentences.
+
+    Supports two formats:
+      1. One sentence per line
+      2. Paragraphs separated by blank lines (auto-split into sentences)
+    """
+    with open(filepath, "r", encoding="utf-8") as f:
+        content = f.read().strip()
+
+    # Check if the file uses one-sentence-per-line format
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+
+    # If most lines end with sentence-ending punctuation, treat as one-per-line
+    ending_punct_count = sum(1 for l in lines if l and l[-1] in ".!?\"'")
+    if ending_punct_count >= len(lines) * 0.5:
+        return lines
+
+    # Otherwise, join everything and split into sentences
+    full_text = " ".join(lines)
+    # Split on sentence-ending punctuation followed by a space
+    sentences = re.split(r'(?<=[.!?])\s+', full_text)
+    return [s.strip() for s in sentences if s.strip()]
 
 
 def find_checkpoint(ckpt_dir: str, step: str = None) -> str:
@@ -54,7 +96,6 @@ def find_checkpoint(ckpt_dir: str, step: str = None) -> str:
         )
 
     # Find latest checkpoint automatically
-    # Filter to only numbered model checkpoints (model_2000.pt etc), exclude model_last.pt and pretrained_*
     numbered_pts = sorted(
         [f for f in os.listdir(ckpt_dir)
          if f.startswith("model_") and f.endswith(".pt")
@@ -63,7 +104,6 @@ def find_checkpoint(ckpt_dir: str, step: str = None) -> str:
         key=lambda x: int(x.replace("model_", "").replace(".pt", ""))
     )
 
-    # Prefer model_last.pt if it exists, otherwise use the latest numbered checkpoint
     if os.path.exists(os.path.join(ckpt_dir, "model_last.pt")):
         print("    Using checkpoint: model_last.pt")
         return os.path.join(ckpt_dir, "model_last.pt")
@@ -78,10 +118,18 @@ def find_checkpoint(ckpt_dir: str, step: str = None) -> str:
 def main():
     args = parse_args()
 
+    # Determine input sentences
+    if args.file:
+        sentences = read_text_file(args.file)
+        source_label = f"File: {args.file} ({len(sentences)} sentences)"
+    else:
+        sentences = [args.text]
+        source_label = f"Text: {args.text}"
+
     print("=" * 50)
     print("  F5-TTS Inference — JFK Voice")
     print("=" * 50)
-    print(f"  Text      : {args.text}")
+    print(f"  Input     : {source_label}")
     print(f"  Reference : {args.ref_clip}")
     print(f"  NFE steps : {args.nfe}")
 
@@ -105,24 +153,57 @@ def main():
         device=device,
     )
 
-    # Run inference
-    print("Synthesizing...")
-    wav, sr, _ = tts.infer(
-        ref_file=args.ref_clip,
-        ref_text=args.ref_text,
-        gen_text=args.text,
-        nfe_step=args.nfe,
-        cross_fade_duration=0.15,
-        speed=1.0,
-    )
+    # Generate audio for each sentence
+    all_wavs = []
+    sr = None
+    output_base = args.output.replace(".wav", "")
 
-    # Save output
+    for i, sentence in enumerate(sentences):
+        label = f"[{i+1}/{len(sentences)}]" if len(sentences) > 1 else ""
+        print(f"\n{label} Synthesizing: {sentence}")
+
+        wav, sr, _ = tts.infer(
+            ref_file=args.ref_clip,
+            ref_text=args.ref_text,
+            gen_text=sentence,
+            nfe_step=args.nfe,
+            cross_fade_duration=0.15,
+            speed=1.0,
+        )
+        all_wavs.append(wav)
+
+        # Save individual files if --split
+        if args.split and len(sentences) > 1:
+            split_path = os.path.join(OUTPUT_DIR, f"{output_base}_{i+1:03d}.wav")
+            sf.write(split_path, wav, sr)
+            print(f"    → Saved: {split_path}")
+
+    # Concatenate all audio with pauses between sentences
+    if len(all_wavs) > 1:
+        pause_samples = int(args.pause * sr)
+        silence = np.zeros(pause_samples, dtype=all_wavs[0].dtype)
+
+        combined = []
+        for i, wav in enumerate(all_wavs):
+            combined.append(wav)
+            if i < len(all_wavs) - 1:
+                combined.append(silence)
+        final_wav = np.concatenate(combined)
+    else:
+        final_wav = all_wavs[0]
+
+    # Save combined output
     output_path = os.path.join(OUTPUT_DIR, args.output)
-    sf.write(output_path, wav, sr)
+    sf.write(output_path, final_wav, sr)
 
-    print(f"\n✅ Saved to: {output_path}")
-    print(f"   Sample rate: {sr}Hz")
-    print(f"   Duration: {len(wav)/sr:.2f}s")
+    print(f"\n{'=' * 50}")
+    print(f"  ✅ Saved to: {output_path}")
+    print(f"     Sentences : {len(sentences)}")
+    print(f"     Sample rate: {sr}Hz")
+    print(f"     Duration: {len(final_wav)/sr:.2f}s")
+    if args.split and len(sentences) > 1:
+        print(f"     Individual files: {output_base}_001.wav — {output_base}_{len(sentences):03d}.wav")
+    print(f"{'=' * 50}")
 
 
 if __name__ == "__main__":
