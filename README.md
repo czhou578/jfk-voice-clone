@@ -361,3 +361,16 @@ python run_inference.py --text "Ask not what your country can do for you."
 Commit model checkpoints to huggingface since each .pt is 5 gb.
 used f5tts_base model to train
 
+python -c "
+from huggingface_hub import HfApi
+api = HfApi()
+api.create_repo('jfk-f5tts-20epochs', exist_ok=True)
+api.upload_folder(
+    folder_path='/root/F5-TTS-ckpts/jfk',
+    repo_id='czhou578/jfk-f5tts-20epochs',
+    repo_type='model'
+)
+print('Upload complete!')
+"
+
+
