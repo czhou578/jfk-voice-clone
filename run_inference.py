@@ -32,8 +32,8 @@ DATASET_DIR    = os.path.abspath(os.path.join(os.path.dirname(__file__), "jfk_da
 
 # A short clean JFK clip to use as voice reference during inference
 # Pick a 3-10 second clip from your dataset that sounds clear and representative
-REFERENCE_CLIP = os.path.join(DATASET_DIR, "wavs/jfk_00002.wav")
-REFERENCE_TEXT = "I am hopeful and confident that from this time forward, the committee will exercise the great powers given to it by the executive order to presently remove from government employment and work performed for the government"
+REFERENCE_CLIP = os.path.join(DATASET_DIR, "wavs/jfk_00078.wav")
+REFERENCE_TEXT = "You are motivated by a desire to see the public interest expanded."
 
 OUTPUT_DIR     = "./jfk_outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -49,6 +49,7 @@ def parse_args():
     text_group.add_argument("--file", help="Path to a text file with sentences/paragraphs")
 
     parser.add_argument("--checkpoint", default=None,  help="Checkpoint step number (e.g. 2000). Defaults to latest.")
+    parser.add_argument("--ckpt_dir",   default=CKPT_DIR, help="Directory to search for checkpoints (overrides default CKPT_DIR).")
     parser.add_argument("--ref_clip",   default=REFERENCE_CLIP, help="Path to reference WAV clip")
     parser.add_argument("--ref_text",   default=REFERENCE_TEXT, help="Transcript of reference clip")
     parser.add_argument("--output",     default="output.wav", help="Output filename (or prefix for multi-sentence)")
@@ -59,28 +60,14 @@ def parse_args():
 
 
 def read_text_file(filepath):
-    """Read a text file and split into sentences.
+    """Read a text file and return one entry per non-empty line.
 
-    Supports two formats:
-      1. One sentence per line
-      2. Paragraphs separated by blank lines (auto-split into sentences)
+    Each line becomes its own TTS synthesis unit, so pauses (--pause) are
+    inserted between every line exactly as the file is formatted.
     """
     with open(filepath, "r", encoding="utf-8") as f:
-        content = f.read().strip()
-
-    # Check if the file uses one-sentence-per-line format
-    lines = [line.strip() for line in content.splitlines() if line.strip()]
-
-    # If most lines end with sentence-ending punctuation, treat as one-per-line
-    ending_punct_count = sum(1 for l in lines if l and l[-1] in ".!?\"'")
-    if ending_punct_count >= len(lines) * 0.5:
-        return lines
-
-    # Otherwise, join everything and split into sentences
-    full_text = " ".join(lines)
-    # Split on sentence-ending punctuation followed by a space
-    sentences = re.split(r'(?<=[.!?])\s+', full_text)
-    return [s.strip() for s in sentences if s.strip()]
+        lines = [line.strip() for line in f if line.strip()]
+    return lines
 
 
 def find_checkpoint(ckpt_dir: str, step: str = None) -> str:
@@ -164,7 +151,7 @@ def main():
     print("=" * 50)
 
     # Find checkpoint
-    ckpt_path = find_checkpoint(CKPT_DIR, args.checkpoint)
+    ckpt_path = find_checkpoint(args.ckpt_dir, args.checkpoint)
 
     # Load fine-tuned model
     print("\nLoading fine-tuned model...")

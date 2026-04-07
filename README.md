@@ -384,3 +384,12 @@ print('Upload complete!')
 "
 
 
+Speed reading — read_text_file detects that most lyric lines don't end with .!? and merges everything into 3 big chunks, so all the silence pauses go between chunks instead of between lines.
+
+Both fixed. Here's what changed:
+
+"Speed reading" fix — read_text_file now always returns one entry per line. Each lyric line becomes its own synthesis call, and the --pause silence (default 0.5s) gets inserted between every line. You can increase the gap:
+
+"government" — jfk_00002.wav is >12s, F5-TTS clips it and the trim alignment breaks, leaking the last word of the reference text into the output. Need a shorter reference clip.
+
+Fix: "Government" fix — switched from jfk_00002.wav (12s+, gets clipped mid-sentence → last word "government" leaks) to jfk_00078.wav (4s, clean): "You are motivated by a desire to see the public interest expanded."
