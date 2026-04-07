@@ -360,6 +360,16 @@ python run_inference.py --text "Ask not what your country can do for you."
 
 Commit model checkpoints to huggingface since each .pt is 5 gb.
 used f5tts_base model to train
+Found the issue. It's not caching — it's the checkpoint resume behavior in finetune_cli.py. Here's what happened:
+
+
+The training command doesn't specify a checkpoint directory, so it always saves/resumes from the same place: F5-TTS/ckpts/F5TTS_Base/. When you ran the 6000 batch size trial, the trainer found the existing checkpoint at update 11100 (left over from the 50-epoch run), then calculated that 30 epochs × fewer steps/epoch (because 6000 frames = bigger batches = fewer updates) = some total that was already less than 11100. So it immediately declared training complete and saved model_last.pt pointing to the same old weights.
+
+
+The 6000 batch size run did zero actual training.
+
+
+The fix is to either clear old checkpoints before each new experiment, or point each run to a fresh checkpoint dir. Let me add a CKPT_DIR variable and a clean start option:
 
 python -c "
 from huggingface_hub import HfApi

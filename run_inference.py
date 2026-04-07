@@ -27,7 +27,7 @@ import torch
 # CONFIG — edit these paths
 # ─────────────────────────────────────────────────────────────
 F5_REPO        = os.path.abspath(os.path.join(os.path.dirname(__file__), "F5-TTS"))
-CKPT_DIR       = "/root/F5-TTS-ckpts/jfk"
+CKPT_DIR       = "/root/F5-TTS-ckpts"
 DATASET_DIR    = os.path.abspath(os.path.join(os.path.dirname(__file__), "jfk_dataset"))
 
 # A short clean JFK clip to use as voice reference during inference
@@ -84,35 +84,56 @@ def read_text_file(filepath):
 
 
 def find_checkpoint(ckpt_dir: str, step: str = None) -> str:
-    """Find the best checkpoint to use."""
+    """Find the best checkpoint to use.
+
+    Searches ckpt_dir recursively for model_last.pt files, picking the most
+    recently modified one (skipping backup dirs). Handles nested structures like
+    jfk_e30_b6000/jfk/ that arise from mv-into-existing-directory behaviour.
+    """
+    # Collect all .pt file paths under ckpt_dir, excluding backups
+    all_pt_files = []
+    for root, dirs, files in os.walk(ckpt_dir):
+        # Skip backup directories
+        dirs[:] = [d for d in dirs if "backup" not in d]
+        for f in files:
+            if f.endswith(".pt") and not f.startswith("pretrained_"):
+                all_pt_files.append(os.path.join(root, f))
+
+    if not all_pt_files:
+        raise FileNotFoundError(f"No checkpoints found under {ckpt_dir}")
+
     if step:
-        path = os.path.join(ckpt_dir, f"model_{step}.pt")
-        if os.path.exists(path):
-            return path
-        available = [f for f in os.listdir(ckpt_dir) if f.startswith("model_") and f.endswith(".pt")]
+        matches = [p for p in all_pt_files if os.path.basename(p) == f"model_{step}.pt"]
+        if matches:
+            return matches[0]
+        available = sorted(set(os.path.basename(p) for p in all_pt_files))
         raise FileNotFoundError(
-            f"Checkpoint not found: {path}\n"
-            f"    Available checkpoints: {', '.join(sorted(available)) or 'none'}"
+            f"Checkpoint model_{step}.pt not found under {ckpt_dir}\n"
+            f"    Available: {', '.join(available) or 'none'}"
         )
 
-    # Find latest checkpoint automatically
-    numbered_pts = sorted(
-        [f for f in os.listdir(ckpt_dir)
-         if f.startswith("model_") and f.endswith(".pt")
-         and not f.startswith("pretrained_")
-         and f != "model_last.pt"],
-        key=lambda x: int(x.replace("model_", "").replace(".pt", ""))
-    )
+    # Prefer model_last.pt — pick the most recently modified one
+    last_pts = [p for p in all_pt_files if os.path.basename(p) == "model_last.pt"]
+    if last_pts:
+        best = max(last_pts, key=os.path.getmtime)
+        print(f"    Using checkpoint: {best}")
+        return best
 
-    if os.path.exists(os.path.join(ckpt_dir, "model_last.pt")):
-        print("    Using checkpoint: model_last.pt")
-        return os.path.join(ckpt_dir, "model_last.pt")
-    elif numbered_pts:
-        latest = os.path.join(ckpt_dir, numbered_pts[-1])
-        print(f"    Using checkpoint: {numbered_pts[-1]}")
+    # Fall back to highest-numbered checkpoint
+    numbered = []
+    for p in all_pt_files:
+        name = os.path.basename(p)
+        if name.startswith("model_") and name != "model_last.pt":
+            try:
+                numbered.append((int(name.replace("model_", "").replace(".pt", "")), p))
+            except ValueError:
+                pass
+    if numbered:
+        _, latest = max(numbered, key=lambda x: x[0])
+        print(f"    Using checkpoint: {latest}")
         return latest
-    else:
-        raise FileNotFoundError(f"No checkpoints found in {ckpt_dir}")
+
+    raise FileNotFoundError(f"No usable checkpoints found under {ckpt_dir}")
 
 
 def main():

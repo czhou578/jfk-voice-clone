@@ -24,17 +24,22 @@ DATASET_PATH="/workspace/jfk-voice-clone/jfk_dataset"
 DATASET_NAME="jfk"                     # name used internally by F5-TTS
 F5_REPO="/workspace/jfk-voice-clone/F5-TTS"    # where to clone the repo
 CONDA_ENV="f5-tts"                     # virtual environment name
-EPOCHS=50                              # start with 10, increase to 20-30 for better accent fidelity
+EPOCHS=30                              # start with 10, increase to 20-30 for better accent fidelity
 LEARNING_RATE=1e-5
-BATCH_SIZE=4000                        # safe for RTX 4090 24GB
+BATCH_SIZE=6000                        # safe for RTX 4090 24GB
 GRAD_ACCUM=1
+# Each experiment gets its own checkpoint dir; the trainer always reads/writes
+# /root/F5-TTS-ckpts/{DATASET_NAME}, so we rename any prior run out of the way.
+EXP_TAG="e${EPOCHS}_b${BATCH_SIZE}"    # unique tag for this experiment
+CKPT_BASE="/root/F5-TTS-ckpts/$DATASET_NAME"  # path finetune_cli.py always uses
+CKPT_DIR="/root/F5-TTS-ckpts/${DATASET_NAME}_${EXP_TAG}"  # where we'll archive this run
 
 echo "=============================================="
 echo " F5-TTS Fine-tuning Pipeline"
 echo "=============================================="
 echo " Dataset : $DATASET_PATH"
 echo " Epochs  : $EPOCHS"
-echo " GPU     : RTX 4090 (24GB)"
+echo " GPU     : RTX 4000 Ada (20GB)"
 echo "=============================================="
 
 # ─────────────────────────────────────────────────────────────
@@ -186,7 +191,7 @@ tpu_use_sudo: false
 use_cpu: false
 EOF
 
-echo "    ✓ Accelerate configured for single RTX 4090"
+echo "    ✓ Accelerate configured for single RTX 4000 Ada"
 
 # ─────────────────────────────────────────────────────────────
 # STEP 6: Launch fine-tuning
@@ -203,10 +208,19 @@ echo "    Epochs            : $EPOCHS"
 echo "    Learning rate     : $LEARNING_RATE"
 echo "    Batch size        : $BATCH_SIZE (frame-based)"
 echo "    Grad accum steps  : $GRAD_ACCUM"
-echo "    Estimated time    : 2-4 hours on RTX 4090"
 echo ""
 
 cd "$F5_REPO"
+
+# finetune_cli.py ALWAYS uses /root/F5-TTS-ckpts/{dataset_name} (hardcoded).
+# Move any prior run out of the way so we start completely fresh.
+if [ -d "$CKPT_BASE" ]; then
+    BACKUP="${CKPT_BASE}_backup_$(date +%s)"
+    echo "    Moving old checkpoint dir → $BACKUP"
+    mv "$CKPT_BASE" "$BACKUP"
+fi
+mkdir -p "$CKPT_BASE"
+echo "    Checkpoints → $CKPT_BASE (fresh, will archive to $CKPT_DIR after training)"
 
 accelerate launch src/f5_tts/train/finetune_cli.py \
     --exp_name        F5TTS_Base \
@@ -229,7 +243,9 @@ accelerate launch src/f5_tts/train/finetune_cli.py \
 echo ""
 echo "=============================================="
 echo " ✅ Fine-tuning complete!"
-echo " Checkpoints saved to: $F5_REPO/ckpts/F5TTS_Base/"
+# Archive the finished checkpoints under the experiment-tagged name
+mv "$CKPT_BASE" "$CKPT_DIR"
+echo " Checkpoints archived to: $CKPT_DIR"
 echo "=============================================="
 echo ""
 echo " To monitor training in real-time, open a second terminal and run:"
