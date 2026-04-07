@@ -32,8 +32,8 @@ DATASET_DIR    = os.path.abspath(os.path.join(os.path.dirname(__file__), "jfk_da
 
 # A short clean JFK clip to use as voice reference during inference
 # Pick a 3-10 second clip from your dataset that sounds clear and representative
-REFERENCE_CLIP = os.path.join(DATASET_DIR, "wavs/jfk_00078.wav")
-REFERENCE_TEXT = "You are motivated by a desire to see the public interest expanded."
+REFERENCE_CLIP = os.path.join(DATASET_DIR, "wavs/jfk_00206.wav")
+REFERENCE_TEXT = "And I therefore want to commend the members of the Congress and the House and the Senate, the Chairman of the subcommittees,"
 
 OUTPUT_DIR     = "./jfk_outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
