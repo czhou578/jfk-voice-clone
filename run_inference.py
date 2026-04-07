@@ -47,7 +47,11 @@ def find_checkpoint(ckpt_dir: str, step: str = None) -> str:
         path = os.path.join(ckpt_dir, f"model_{step}.pt")
         if os.path.exists(path):
             return path
-        raise FileNotFoundError(f"Checkpoint not found: {path}")
+        available = [f for f in os.listdir(ckpt_dir) if f.startswith("model_") and f.endswith(".pt")]
+        raise FileNotFoundError(
+            f"Checkpoint not found: {path}\n"
+            f"    Available checkpoints: {', '.join(sorted(available)) or 'none'}"
+        )
 
     # Find latest checkpoint automatically
     # Filter to only numbered model checkpoints (model_2000.pt etc), exclude model_last.pt and pretrained_*

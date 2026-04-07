@@ -358,3 +358,6 @@ python run_inference.py --text "Ask not what your country can do for you."
 | CSV error? | Make sure to git lfs pull so that csv is populated with real data, and not just the lfs pointer |
 | No valid audio files were processed | Make sure that wav files are not git lfs pointers | 
 
+Commit model checkpoints to huggingface since each .pt is 5 gb.
+used f5tts_base model to train
+
