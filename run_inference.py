@@ -56,18 +56,40 @@ def parse_args():
     parser.add_argument("--nfe",        type=int, default=32, help="NFE steps (higher = better quality, slower)")
     parser.add_argument("--pause",      type=float, default=0.5, help="Pause in seconds between sentences (default: 0.5)")
     parser.add_argument("--split",      action="store_true", help="Save each sentence as a separate WAV file")
+    parser.add_argument("--mode",       default="lines", choices=["lines", "sentences"],
+                        help="'lines': one TTS call per line (good for lyrics). 'sentences': split on punctuation (good for prose/speeches).")
     return parser.parse_args()
 
 
-def read_text_file(filepath):
-    """Read a text file and return one entry per non-empty line.
+def read_text_file(filepath, mode="lines"):
+    """Read a text file and return a list of TTS units.
 
-    Each line becomes its own TTS synthesis unit, so pauses (--pause) are
-    inserted between every line exactly as the file is formatted.
+    mode='lines'     : one entry per non-empty line (good for lyrics).
+    mode='sentences' : split on sentence-ending punctuation (good for prose/speeches).
     """
     with open(filepath, "r", encoding="utf-8") as f:
-        lines = [line.strip() for line in f if line.strip()]
-    return lines
+        content = f.read()
+
+    if mode == "lines":
+        return [line.strip() for line in content.splitlines() if line.strip()]
+
+    # sentences mode: join non-empty lines within each paragraph, then split on .!?
+    paragraphs = []
+    current = []
+    for line in content.splitlines():
+        if line.strip():
+            current.append(line.strip())
+        elif current:
+            paragraphs.append(" ".join(current))
+            current = []
+    if current:
+        paragraphs.append(" ".join(current))
+
+    sentences = []
+    for para in paragraphs:
+        parts = re.split(r'(?<=[.!?])\s+', para)
+        sentences.extend(s.strip() for s in parts if s.strip())
+    return sentences
 
 
 def find_checkpoint(ckpt_dir: str, step: str = None) -> str:
@@ -128,8 +150,8 @@ def main():
 
     # Determine input sentences
     if args.file:
-        sentences = read_text_file(args.file)
-        source_label = f"File: {args.file} ({len(sentences)} sentences)"
+        sentences = read_text_file(args.file, mode=args.mode)
+        source_label = f"File: {args.file} ({len(sentences)} units, mode={args.mode})"
     else:
         sentences = [args.text]
         source_label = f"Text: {args.text}"

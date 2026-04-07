@@ -393,3 +393,5 @@ Both fixed. Here's what changed:
 "government" — jfk_00002.wav is >12s, F5-TTS clips it and the trim alignment breaks, leaking the last word of the reference text into the output. Need a shorter reference clip.
 
 Fix: "Government" fix — switched from jfk_00002.wav (12s+, gets clipped mid-sentence → last word "government" leaks) to jfk_00078.wav (4s, clean): "You are motivated by a desire to see the public interest expanded."
+
+Lines vs sentences 
