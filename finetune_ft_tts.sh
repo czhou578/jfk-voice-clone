@@ -25,7 +25,7 @@ DATASET_NAME="jfk"                     # name used internally by F5-TTS
 F5_REPO="/workspace/jfk-voice-clone/F5-TTS"    # where to clone the repo
 CONDA_ENV="f5-tts"                     # virtual environment name
 EPOCHS=30                              # start with 10, increase to 20-30 for better accent fidelity
-LEARNING_RATE=3e-5
+LEARNING_RATE=5e-5
 BATCH_SIZE=6000                        # safe for RTX 4090 24GB
 GRAD_ACCUM=1
 # Each experiment gets its own checkpoint dir; the trainer always reads/writes
@@ -215,9 +215,8 @@ cd "$F5_REPO"
 # finetune_cli.py ALWAYS uses /root/F5-TTS-ckpts/{dataset_name} (hardcoded).
 # Move any prior run out of the way so we start completely fresh.
 if [ -d "$CKPT_BASE" ]; then
-    BACKUP="${CKPT_BASE}_backup_$(date +%s)"
-    echo "    Moving old checkpoint dir → $BACKUP"
-    mv "$CKPT_BASE" "$BACKUP"
+    echo "    Removing old checkpoint dir (upload to HF first if needed!)"
+    rm -rf "$CKPT_BASE"
 fi
 mkdir -p "$CKPT_BASE"
 echo "    Checkpoints → $CKPT_BASE (fresh, will archive to $CKPT_DIR after training)"
@@ -244,7 +243,7 @@ echo ""
 echo "=============================================="
 echo " ✅ Fine-tuning complete!"
 # Archive the finished checkpoints under the experiment-tagged name
-mv "$CKPT_BASE" "$CKPT_DIR"
+rm -rf "$CKPT_DIR" && mv "$CKPT_BASE" "$CKPT_DIR"
 echo " Checkpoints archived to: $CKPT_DIR"
 echo "=============================================="
 echo ""
