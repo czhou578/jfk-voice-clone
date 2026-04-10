@@ -358,40 +358,4 @@ python run_inference.py --text "Ask not what your country can do for you."
 | CSV error? | Make sure to git lfs pull so that csv is populated with real data, and not just the lfs pointer |
 | No valid audio files were processed | Make sure that wav files are not git lfs pointers | 
 
-Commit model checkpoints to huggingface since each .pt is 5 gb.
-used f5tts_base model to train
-Found the issue. It's not caching — it's the checkpoint resume behavior in finetune_cli.py. Here's what happened:
-
-
-The training command doesn't specify a checkpoint directory, so it always saves/resumes from the same place: F5-TTS/ckpts/F5TTS_Base/. When you ran the 6000 batch size trial, the trainer found the existing checkpoint at update 11100 (left over from the 50-epoch run), then calculated that 30 epochs × fewer steps/epoch (because 6000 frames = bigger batches = fewer updates) = some total that was already less than 11100. So it immediately declared training complete and saved model_last.pt pointing to the same old weights.
-
-
-The 6000 batch size run did zero actual training.
-
-
-The fix is to either clear old checkpoints before each new experiment, or point each run to a fresh checkpoint dir. Let me add a CKPT_DIR variable and a clean start option:
-
-python -c "
-from huggingface_hub import HfApi
-api = HfApi()
-api.create_repo('jfk-f5tts-20epochs', exist_ok=True)
-api.upload_folder(
-    folder_path='/root/F5-TTS-ckpts/jfk',
-    repo_id='czhou578/jfk-f5tts-20epochs',
-    repo_type='model'
-)
-print('Upload complete!')
-"
-
-
-Speed reading — read_text_file detects that most lyric lines don't end with .!? and merges everything into 3 big chunks, so all the silence pauses go between chunks instead of between lines.
-
-Both fixed. Here's what changed:
-
-"Speed reading" fix — read_text_file now always returns one entry per line. Each lyric line becomes its own synthesis call, and the --pause silence (default 0.5s) gets inserted between every line. You can increase the gap:
-
-"government" — jfk_00002.wav is >12s, F5-TTS clips it and the trim alignment breaks, leaking the last word of the reference text into the output. Need a shorter reference clip.
-
-Fix: "Government" fix — switched from jfk_00002.wav (12s+, gets clipped mid-sentence → last word "government" leaks) to jfk_00078.wav (4s, clean): "You are motivated by a desire to see the public interest expanded."
-
-Lines vs sentences 
+[HuggingFace Repos](https://huggingface.co/czhou578)
