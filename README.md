@@ -20,7 +20,7 @@ Two helper scripts support phase 3:
 
 | Script | What it does |
 |--------|--------------|
-| `slim_checkpoint.py` | Extracts the 1.3 GB inference weights from a 5 GB training checkpoint |
+| `slim_checkpoint.py` | Extracts the inference weights from a 5 GB training checkpoint, 0.63 GB in float16 |
 | `update_nb.py` | Updates the dependency cell of the Colab notebook |
 
 ---
@@ -106,10 +106,12 @@ A training checkpoint carries the optimizer state, and the loader reads the whol
 
 ```bash
 .venv/bin/python slim_checkpoint.py checkpoints/jfk-f5tts-30epochs/model_last.pt
-# writes checkpoints/jfk-f5tts-30epochs/model_last_ema.safetensors (1.26 GiB)
+# writes checkpoints/jfk-f5tts-30epochs/model_last_ema.safetensors (0.63 GiB, float16)
 ```
 
 The script memory-maps the input, so it needs about 1.8 GB of RAM and a few seconds. You can delete the 5 GB `.pt` file afterwards.
+
+The output is float16 by default. The F5-TTS loader runs the model in float16 on a CUDA GPU, so the GPU result is the same as with float32 weights, and the file loads in a third of the time. For CPU inference with the full-precision weights, add `--dtype float32` (1.26 GiB).
 
 ### Step 6 — Generate speech
 
@@ -278,7 +280,7 @@ BATCH_SIZE=6000              # frames; 6000 fits a 24 GB card, 4000 fits 16 GB
 GRAD_ACCUM=1
 ```
 
-Each run gets a tag `e${EPOCHS}_b${BATCH_SIZE}`. The trainer writes to `/root/F5-TTS-ckpts/jfk`, and the script moves that folder to `/root/F5-TTS-ckpts/jfk_<tag>` when training ends.
+Each run gets a tag `e${EPOCHS}_b${BATCH_SIZE}`. The trainer writes to `/root/F5-TTS-ckpts/jfk`, and the script moves that folder to `/root/F5-TTS-ckpts/jfk_<tag>` when training ends. If that archive folder exists, the script appends a timestamp instead of overwriting it.
 
 ### Step 2.2 — Run the script
 
@@ -290,11 +292,11 @@ chmod +x finetune_ft_tts.sh
 ### What the script does
 
 1. **Validates the F5-TTS submodule.** It does not pull, to avoid a detached HEAD.
-2. **Sets up the environment.** Installs `python3-venv` and `ffmpeg`, creates `/workspace/f5-tts`, installs torch 2.4.0+cu121, F5-TTS (`pip install -e .`), `accelerate`, and `tensorboard`.
-3. **Prepares the dataset.** Pulls LFS files, rejects LFS pointer files, copies `wavs/` and `metadata.csv` to `F5-TTS/data/jfk/`, and rewrites the paths in the CSV to absolute paths.
-4. **Runs `prepare_csv_wavs.py`.** This writes `raw.arrow`, `duration.json`, and `vocab.txt`. The vocab is a copy of the pretrained Emilia vocab, so the fine-tuned model keeps the same token set as the base model.
+2. **Sets up the environment.** Installs `python3-venv` and `ffmpeg`, creates `/workspace/f5-tts`, installs torch 2.4.0+cu121, F5-TTS (`pip install -e .`), `accelerate`, and `tensorboard`. It skips each step whose result already exists, so a second run does not download torch again.
+3. **Prepares the dataset.** Pulls LFS files, rejects LFS pointer files, and writes `F5-TTS/data/jfk/metadata.csv` with absolute paths to the WAV files in `jfk_dataset/wavs/`. It does not copy the WAV files.
+4. **Runs `prepare_csv_wavs.py`.** This writes `raw.arrow`, `duration.json`, and `vocab.txt`. The vocab is a copy of the pretrained Emilia vocab, so the fine-tuned model keeps the same token set as the base model. The script skips this step when `raw.arrow` is newer than `metadata.csv`.
 5. **Writes the accelerate config.** Single GPU, fp16 mixed precision.
-6. **Launches training.** It removes any old `/root/F5-TTS-ckpts/jfk` first.
+6. **Launches training.** It first moves any old `/root/F5-TTS-ckpts/jfk` to an archive folder named after that run's tag. A crashed run keeps its checkpoints this way.
 
 Training settings:
 
@@ -335,12 +337,13 @@ While training runs, checkpoints are in `/root/F5-TTS-ckpts/jfk/`:
 
 ```
 /root/F5-TTS-ckpts/jfk/
+├── .exp_tag                      # the run's tag, used to name the archive folder
 ├── model_last.pt                 # latest, 5 GB, holds optimizer state
 ├── model_6000.pt                 # saved every 1000 updates, older ones deleted
 └── pretrained_model_1200000.pt   # the base model
 ```
 
-After the script moves the folder, upload the run to HuggingFace before you start the next one, because the next run deletes `/root/F5-TTS-ckpts/jfk`:
+After the script moves the folder, upload the run to HuggingFace:
 
 ```bash
 source /workspace/f5-tts/bin/activate

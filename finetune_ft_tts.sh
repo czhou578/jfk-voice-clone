@@ -61,23 +61,35 @@ cd "$F5_REPO"
 echo ""
 echo "[2/6] Setting up python virtual environment: $CONDA_ENV"
 
-apt-get update -y && apt-get install -y python3-venv ffmpeg || true
+VENV_DIR="/workspace/$CONDA_ENV"
 
-python3 -m venv "/workspace/$CONDA_ENV"
-source "/workspace/$CONDA_ENV/bin/activate"
+# Each step below runs only when its result is missing, so a second run
+# of this script does not download torch again.
+if ! command -v ffmpeg >/dev/null 2>&1 || ! python3 -c "import ensurepip" >/dev/null 2>&1; then
+    apt-get update -y && apt-get install -y python3-venv ffmpeg || true
+fi
 
-# Update pip
-pip install --no-cache-dir --upgrade pip
+if [ ! -d "$VENV_DIR" ]; then
+    python3 -m venv "$VENV_DIR"
+fi
+source "$VENV_DIR/bin/activate"
 
-# Install PyTorch with CUDA 12.1 (works for RTX 4090)
-pip install --no-cache-dir torch==2.4.0+cu121 torchaudio==2.4.0+cu121 \
-    --extra-index-url https://download.pytorch.org/whl/cu121
+if python -c "import torch, f5_tts, accelerate, tensorboard" >/dev/null 2>&1; then
+    echo "    ✓ Dependencies already installed, skipping pip"
+else
+    # Update pip
+    pip install --no-cache-dir --upgrade pip
 
-# Install F5-TTS and its dependencies
-pip install --no-cache-dir -e .
+    # Install PyTorch with CUDA 12.1 (works for RTX 4090)
+    pip install --no-cache-dir torch==2.4.0+cu121 torchaudio==2.4.0+cu121 \
+        --extra-index-url https://download.pytorch.org/whl/cu121
 
-# Install accelerate for training
-pip install --no-cache-dir accelerate tensorboard
+    # Install F5-TTS and its dependencies
+    pip install --no-cache-dir -e .
+
+    # Install accelerate for training
+    pip install --no-cache-dir accelerate tensorboard
+fi
 
 echo "    ✓ Environment ready"
 
@@ -110,19 +122,16 @@ if [ -n "$SAMPLE_WAV" ] && head -1 "$SAMPLE_WAV" | grep -q "^version https://git
     exit 1
 fi
 
-# Copy your wavs and metadata.csv into F5-TTS expected location
-cp -r "$DATASET_PATH/wavs" "$DATA_DIR/wavs"
-cp "$DATASET_PATH/metadata.csv" "$DATA_DIR/metadata.csv"
-
-# Fix metadata format — F5-TTS expects absolute paths: /absolute/path.wav|transcript
-echo "    Converting metadata to use absolute paths..."
+# Write metadata.csv into the F5-TTS data directory with absolute paths.
+# F5-TTS expects: /absolute/path.wav|transcript. The paths point at the WAV
+# files in $DATASET_PATH/wavs, so the script does not copy the audio.
+echo "    Writing metadata with absolute paths..."
 python3 -c "
 import sys, os
-csv_path = sys.argv[1]
-wavs_dir = sys.argv[2]
-with open(csv_path, 'r', encoding='utf-8') as f:
+src_path, dst_path, wavs_dir = sys.argv[1:4]
+with open(src_path, 'r', encoding='utf-8') as f:
     lines = f.readlines()
-with open(csv_path, 'w', encoding='utf-8') as f:
+with open(dst_path, 'w', encoding='utf-8') as f:
     f.write('audio_file|text\n')
     for line in lines[1:]:
         if '|' in line:
@@ -130,12 +139,12 @@ with open(csv_path, 'w', encoding='utf-8') as f:
             if not filename.startswith('/'):
                 filename = os.path.join(wavs_dir, os.path.basename(filename))
             f.write(f'{filename}|{text}')
-" "$DATA_DIR/metadata.csv" "$DATA_DIR/wavs"
+" "$DATASET_PATH/metadata.csv" "$DATA_DIR/metadata.csv" "$DATASET_PATH/wavs"
 
 HEAD=$(head -2 "$DATA_DIR/metadata.csv")
 echo "    Sample rows:"
 echo "$HEAD"
-echo "    ✓ Dataset copied to $DATA_DIR"
+echo "    ✓ Metadata written to $DATA_DIR"
 
 # ─────────────────────────────────────────────────────────────
 # STEP 4: Run the official dataset preparation script
@@ -147,9 +156,16 @@ echo "[4/6] Running F5-TTS dataset preparation (prepare_csv_wavs.py)..."
 
 cd "$F5_REPO/src/f5_tts/train/datasets"
 
-python prepare_csv_wavs.py \
-    "$DATA_DIR/metadata.csv" \
-    "$DATA_DIR"
+# The conversion reads every WAV file. Skip it when the output is newer
+# than the dataset's metadata.csv.
+if [ "$DATA_DIR/raw.arrow" -nt "$DATASET_PATH/metadata.csv" ] \
+   && [ -f "$DATA_DIR/duration.json" ] && [ -f "$DATA_DIR/vocab.txt" ]; then
+    echo "    ✓ raw.arrow is newer than metadata.csv, skipping conversion"
+else
+    python prepare_csv_wavs.py \
+        "$DATA_DIR/metadata.csv" \
+        "$DATA_DIR"
+fi
 
 # Verify output files were created
 if [ ! -f "$DATA_DIR/raw.arrow" ]; then
@@ -158,6 +174,10 @@ if [ ! -f "$DATA_DIR/raw.arrow" ]; then
 fi
 if [ ! -f "$DATA_DIR/duration.json" ]; then
     echo "ERROR: duration.json not created. Check that WAV files exist."
+    exit 1
+fi
+if [ ! -f "$DATA_DIR/vocab.txt" ]; then
+    echo "ERROR: vocab.txt not created."
     exit 1
 fi
 
@@ -213,12 +233,25 @@ echo ""
 cd "$F5_REPO"
 
 # finetune_cli.py ALWAYS uses /root/F5-TTS-ckpts/{dataset_name} (hardcoded).
-# Move any prior run out of the way so we start completely fresh.
+# Move any prior run out of the way so we start completely fresh. The prior
+# run is archived, never deleted, so a crashed run keeps its checkpoints.
+# If the archive name is taken, a timestamp is appended.
+archive_run() {
+    local src="$1" dest="$2"
+    if [ -e "$dest" ]; then
+        dest="${dest}_$(date +%Y%m%d_%H%M%S)"
+    fi
+    mv "$src" "$dest"
+    echo "    Archived checkpoints to: $dest"
+}
+
 if [ -d "$CKPT_BASE" ]; then
-    echo "    Removing old checkpoint dir (upload to HF first if needed!)"
-    rm -rf "$CKPT_BASE"
+    # The previous run wrote its tag into .exp_tag. Fall back to a timestamp.
+    PREV_TAG="$(cat "$CKPT_BASE/.exp_tag" 2>/dev/null || date +%Y%m%d_%H%M%S)"
+    archive_run "$CKPT_BASE" "/root/F5-TTS-ckpts/${DATASET_NAME}_${PREV_TAG}"
 fi
 mkdir -p "$CKPT_BASE"
+echo "$EXP_TAG" > "$CKPT_BASE/.exp_tag"
 echo "    Checkpoints → $CKPT_BASE (fresh, will archive to $CKPT_DIR after training)"
 
 accelerate launch src/f5_tts/train/finetune_cli.py \
@@ -243,8 +276,7 @@ echo ""
 echo "=============================================="
 echo " ✅ Fine-tuning complete!"
 # Archive the finished checkpoints under the experiment-tagged name
-rm -rf "$CKPT_DIR" && mv "$CKPT_BASE" "$CKPT_DIR"
-echo " Checkpoints archived to: $CKPT_DIR"
+archive_run "$CKPT_BASE" "$CKPT_DIR"
 echo "=============================================="
 echo ""
 echo " To monitor training in real-time, open a second terminal and run:"

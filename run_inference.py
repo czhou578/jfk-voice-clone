@@ -201,13 +201,18 @@ def main():
     else:
         ckpt_path = find_checkpoint(args.ckpt_dir, args.checkpoint)
 
-    # Load fine-tuned model
+    # Load fine-tuned model.
+    # Build it inside a device context. Without this, F5-TTS initializes the
+    # 337M weights with random values on the CPU and then moves them to the
+    # GPU. On the DGX Spark that costs 4 s per run with free host memory,
+    # and about 14 s when the host is short of memory.
     print("\nLoading fine-tuned model...")
-    tts = F5TTS(
-        model="F5TTS_Base",
-        ckpt_file=ckpt_path,
-        device=device,
-    )
+    with torch.device(device):
+        tts = F5TTS(
+            model="F5TTS_Base",
+            ckpt_file=ckpt_path,
+            device=device,
+        )
 
     # Generate audio for each sentence
     all_wavs = []
