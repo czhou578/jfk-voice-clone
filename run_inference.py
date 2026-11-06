@@ -12,7 +12,10 @@ Usage:
     python run_inference.py --file speech.txt
 
     # With custom settings
-    python run_inference.py --file speech.txt --checkpoint 2000 --nfe 64
+    python run_inference.py --file speech.txt --checkpoint 6000 --nfe 64
+
+    # Point at one checkpoint file, run on the CPU
+    python run_inference.py --text "Hello." --ckpt_file checkpoints/jfk-f5tts-30epochs/model_last_ema.safetensors --device cpu
 """
 
 import argparse
@@ -26,9 +29,12 @@ import torch
 # ─────────────────────────────────────────────────────────────
 # CONFIG — edit these paths
 # ─────────────────────────────────────────────────────────────
-F5_REPO        = os.path.abspath(os.path.join(os.path.dirname(__file__), "F5-TTS"))
-CKPT_DIR       = "/root/F5-TTS-ckpts"
-DATASET_DIR    = os.path.abspath(os.path.join(os.path.dirname(__file__), "jfk_dataset"))
+PROJECT_DIR    = os.path.abspath(os.path.dirname(__file__))
+F5_REPO        = os.path.join(PROJECT_DIR, "F5-TTS")
+# Checkpoints live under ./checkpoints by default. Set JFK_CKPT_DIR to override,
+# for example JFK_CKPT_DIR=/root/F5-TTS-ckpts on a RunPod training box.
+CKPT_DIR       = os.environ.get("JFK_CKPT_DIR", os.path.join(PROJECT_DIR, "checkpoints"))
+DATASET_DIR    = os.path.join(PROJECT_DIR, "jfk_dataset")
 
 # A short clean JFK clip to use as voice reference during inference
 # Pick a 3-10 second clip from your dataset that sounds clear and representative
@@ -49,7 +55,9 @@ def parse_args():
     text_group.add_argument("--file", help="Path to a text file with sentences/paragraphs")
 
     parser.add_argument("--checkpoint", default=None,  help="Checkpoint step number (e.g. 2000). Defaults to latest.")
-    parser.add_argument("--ckpt_dir",   default=CKPT_DIR, help="Directory to search for checkpoints (overrides default CKPT_DIR).")
+    parser.add_argument("--ckpt_dir",   default=CKPT_DIR, help="Directory to search for checkpoints (default: ./checkpoints, or $JFK_CKPT_DIR).")
+    parser.add_argument("--ckpt_file",  default=None, help="Exact checkpoint file (.safetensors or .pt). Skips the search.")
+    parser.add_argument("--device",     default="auto", choices=["auto", "cuda", "cpu"], help="Compute device (default: cuda if available, else cpu)")
     parser.add_argument("--ref_clip",   default=REFERENCE_CLIP, help="Path to reference WAV clip")
     parser.add_argument("--ref_text",   default=REFERENCE_TEXT, help="Transcript of reference clip")
     parser.add_argument("--output",     default="output.wav", help="Output filename (or prefix for multi-sentence)")
@@ -95,48 +103,59 @@ def read_text_file(filepath, mode="lines"):
 def find_checkpoint(ckpt_dir: str, step: str = None) -> str:
     """Find the best checkpoint to use.
 
-    Searches ckpt_dir recursively for model_last.pt files, picking the most
-    recently modified one (skipping backup dirs). Handles nested structures like
-    jfk_e30_b6000/jfk/ that arise from mv-into-existing-directory behaviour.
+    Searches ckpt_dir recursively for checkpoint files (skipping backup dirs
+    and pretrained_* files). Accepts .safetensors (slim EMA weights, see
+    slim_checkpoint.py) and .pt (full training checkpoints).
+
+    Order of preference without --checkpoint:
+      1. model_last*.safetensors, most recently modified
+      2. model_last.pt, most recently modified
+      3. the highest numbered model_<step> file
     """
-    # Collect all .pt file paths under ckpt_dir, excluding backups
-    all_pt_files = []
+    found = []
     for root, dirs, files in os.walk(ckpt_dir):
-        # Skip backup directories
         dirs[:] = [d for d in dirs if "backup" not in d]
         for f in files:
-            if f.endswith(".pt") and not f.startswith("pretrained_"):
-                all_pt_files.append(os.path.join(root, f))
+            if f.startswith("pretrained_"):
+                continue
+            if f.endswith(".pt") or f.endswith(".safetensors"):
+                found.append(os.path.join(root, f))
 
-    if not all_pt_files:
-        raise FileNotFoundError(f"No checkpoints found under {ckpt_dir}")
+    if not found:
+        raise FileNotFoundError(
+            f"No checkpoints found under {ckpt_dir}\n"
+            f"    Download one first, see README.md 'Phase 3'."
+        )
+
+    def stem(path):
+        name = os.path.basename(path)
+        name = re.sub(r"\.(pt|safetensors)$", "", name)
+        return re.sub(r"_ema$", "", name)
 
     if step:
-        matches = [p for p in all_pt_files if os.path.basename(p) == f"model_{step}.pt"]
+        matches = [p for p in found if stem(p) == f"model_{step}"]
         if matches:
+            matches.sort(key=lambda p: (not p.endswith(".safetensors"), -os.path.getmtime(p)))
+            print(f"    Using checkpoint: {matches[0]}")
             return matches[0]
-        available = sorted(set(os.path.basename(p) for p in all_pt_files))
+        available = sorted(set(os.path.basename(p) for p in found))
         raise FileNotFoundError(
-            f"Checkpoint model_{step}.pt not found under {ckpt_dir}\n"
+            f"Checkpoint model_{step} not found under {ckpt_dir}\n"
             f"    Available: {', '.join(available) or 'none'}"
         )
 
-    # Prefer model_last.pt — pick the most recently modified one
-    last_pts = [p for p in all_pt_files if os.path.basename(p) == "model_last.pt"]
-    if last_pts:
-        best = max(last_pts, key=os.path.getmtime)
-        print(f"    Using checkpoint: {best}")
-        return best
+    for ext in (".safetensors", ".pt"):
+        last = [p for p in found if stem(p) == "model_last" and p.endswith(ext)]
+        if last:
+            best = max(last, key=os.path.getmtime)
+            print(f"    Using checkpoint: {best}")
+            return best
 
-    # Fall back to highest-numbered checkpoint
     numbered = []
-    for p in all_pt_files:
-        name = os.path.basename(p)
-        if name.startswith("model_") and name != "model_last.pt":
-            try:
-                numbered.append((int(name.replace("model_", "").replace(".pt", "")), p))
-            except ValueError:
-                pass
+    for p in found:
+        m = re.fullmatch(r"model_(\d+)", stem(p))
+        if m:
+            numbered.append((int(m.group(1)), p))
     if numbered:
         _, latest = max(numbered, key=lambda x: x[0])
         print(f"    Using checkpoint: {latest}")
@@ -168,12 +187,19 @@ def main():
 
     from f5_tts.api import F5TTS
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if args.device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        device = args.device
     print(f"  Device    : {device}")
     print("=" * 50)
 
     # Find checkpoint
-    ckpt_path = find_checkpoint(args.ckpt_dir, args.checkpoint)
+    if args.ckpt_file:
+        ckpt_path = args.ckpt_file
+        print(f"    Using checkpoint: {ckpt_path}")
+    else:
+        ckpt_path = find_checkpoint(args.ckpt_dir, args.checkpoint)
 
     # Load fine-tuned model
     print("\nLoading fine-tuned model...")
