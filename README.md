@@ -187,7 +187,9 @@ This phase takes a YouTube video of JFK speaking and produces a clean, segmented
 1. **Downloads** audio from YouTube with `yt-dlp`, converted to 16 kHz mono WAV
 2. **Denoises** the audio with `resemble-enhance` to remove crowd noise, applause, and background
 3. **Transcribes and segments** with `WhisperX`. VAD strips silences and produces word-aligned timestamps
-4. **Slices** the denoised audio into 3–15 second clips and writes `metadata.csv`
+4. **Slices** the denoised audio into 3–15 second clips at 24 kHz, the F5-TTS training rate, and writes `metadata.csv`
+
+The intermediate files stay in `<output>/_work/`: the raw download, the denoised audio, and the WhisperX segments in `segments.json`. A rerun skips every step whose file exists. To re-slice with other clip lengths, keep `_work/` and run the script again with new `--min_sec` or `--max_sec` values.
 
 ### Step 1.1 — Install system dependencies
 
@@ -227,7 +229,7 @@ python prepare_tts_dataset.py \
 | `--language` | `en` | Language code |
 | `--min_sec` | `3.0` | Minimum clip duration in seconds |
 | `--max_sec` | `15.0` | Maximum clip duration in seconds |
-| `--hf_token` | `None` | HuggingFace token for WhisperX diarization |
+| `--sample_rate` | `24000` | Sample rate of the exported clips. `0` keeps the source rate |
 
 ### Step 1.4 — Verify the dataset
 
@@ -240,7 +242,7 @@ jfk_dataset/
 │   ├── jfk_00000.wav
 │   ├── jfk_00001.wav
 │   └── ... (hundreds of clips)
-└── _work/                # Intermediate files (raw download, denoised audio)
+└── _work/                # Intermediate files (raw download, denoised audio, segments.json)
 ```
 
 Spot-check a few clips and their transcripts:

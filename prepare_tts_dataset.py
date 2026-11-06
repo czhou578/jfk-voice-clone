@@ -16,11 +16,10 @@ Requirements (install before running):
 """
 
 import os
-import sys
 import argparse
-import subprocess
 import csv
-import shutil
+import json
+import subprocess
 import soundfile as sf
 
 # ─────────────────────────────────────────────────────────────
@@ -36,8 +35,8 @@ def parse_args():
     parser.add_argument("--language",   default="en",   help="Language code (default: en)")
     parser.add_argument("--min_sec",    type=float, default=3.0,  help="Minimum clip duration in seconds")
     parser.add_argument("--max_sec",    type=float, default=15.0, help="Maximum clip duration in seconds")
-    parser.add_argument("--hf_token",   default=None,
-        help="HuggingFace token (required for WhisperX diarization). Get one at https://huggingface.co/settings/tokens")
+    parser.add_argument("--sample_rate", type=int, default=24000,
+        help="Sample rate of the exported clips (default: 24000, the F5-TTS training rate). 0 keeps the source rate.")
     return parser.parse_args()
 
 # ─────────────────────────────────────────────────────────────
@@ -75,10 +74,6 @@ def denoise_audio(input_wav: str, out_path: str) -> str:
     """Remove crowd noise, applause, and background noise."""
     print("\n[2/4] Denoising audio with resemble-enhance...")
 
-    from resemble_enhance.enhancer.inference import denoise
-    import torch
-    import torchaudio
-
     denoised_dir = os.path.join(out_path, "denoised")
     os.makedirs(denoised_dir, exist_ok=True)
     denoised_path = os.path.join(denoised_dir, "denoised.wav")
@@ -86,6 +81,11 @@ def denoise_audio(input_wav: str, out_path: str) -> str:
     if os.path.exists(denoised_path):
         print(f"    ✓ Found existing denoised audio at: {denoised_path}, skipping denoise.")
         return denoised_path
+
+    # Import after the cache check, so a rerun does not need resemble-enhance.
+    from resemble_enhance.enhancer.inference import denoise
+    import torch
+    import torchaudio
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"    Using device: {device}")
@@ -111,6 +111,15 @@ def transcribe_and_segment(input_wav: str, out_path: str, args) -> list:
       - Return list of segments: {start, end, text}
     """
     print("\n[3/4] Running WhisperX (VAD + transcription)...")
+
+    # Cache the segments. Transcription is the slowest step, and a change to
+    # --min_sec or --max_sec only needs the slicing step to run again.
+    segments_path = os.path.join(out_path, "segments.json")
+    if os.path.exists(segments_path):
+        with open(segments_path, "r", encoding="utf-8") as f:
+            segments = json.load(f)
+        print(f"    ✓ Found existing segments at: {segments_path} ({len(segments)} segments), skipping transcription.")
+        return segments
 
     import whisperx
     import torch
@@ -143,6 +152,9 @@ def transcribe_and_segment(input_wav: str, out_path: str, args) -> list:
         return_char_alignments=False
     )
 
+    with open(segments_path, "w", encoding="utf-8") as f:
+        json.dump(result["segments"], f, ensure_ascii=False)
+    print(f"    ✓ Segments saved to: {segments_path}")
     return result["segments"]
 
 # ─────────────────────────────────────────────────────────────
@@ -153,13 +165,26 @@ def slice_and_export(denoised_wav: str, segments: list, out_path: str, args) -> 
     """
     Slice denoised audio into clips using WhisperX segment timestamps.
     Filter clips by min/max duration. Export wavs + metadata.csv.
+
+    The clips are exported at args.sample_rate (24 kHz by default, the rate
+    F5-TTS trains at), so the trainer does not resample every clip in every
+    epoch and the dataset is about half the size of a 44.1 kHz export.
     """
     print("\n[4/4] Slicing audio and building dataset...")
+
+    import torchaudio
 
     wavs_dir = os.path.join(out_path, "wavs")
     os.makedirs(wavs_dir, exist_ok=True)
 
-    audio_data, sample_rate = sf.read(denoised_wav)
+    # torchaudio loads float32; soundfile's default float64 needs twice the RAM.
+    audio, source_rate = torchaudio.load(denoised_wav)
+    audio = audio.mean(dim=0)  # mono
+    sample_rate = args.sample_rate or source_rate
+    if sample_rate != source_rate:
+        print(f"    Resampling {source_rate} Hz -> {sample_rate} Hz...")
+        audio = torchaudio.functional.resample(audio, source_rate, sample_rate)
+    audio_data = audio.numpy()
 
     metadata_path = os.path.join(out_path, "metadata.csv")
     kept = 0
@@ -167,7 +192,7 @@ def slice_and_export(denoised_wav: str, segments: list, out_path: str, args) -> 
 
     with open(metadata_path, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile, delimiter="|")
-        writer.writerow(["file", "text"])  # header
+        writer.writerow(["audio_file", "text"])  # header, same as the committed dataset
 
         for i, seg in enumerate(segments):
             start = seg.get("start", None)
@@ -194,7 +219,7 @@ def slice_and_export(denoised_wav: str, segments: list, out_path: str, args) -> 
             # Save clip
             clip_name = f"{args.speaker}_{i:05d}.wav"
             clip_path = os.path.join(wavs_dir, clip_name)
-            sf.write(clip_path, clip, sample_rate)
+            sf.write(clip_path, clip, sample_rate, subtype="PCM_16")
 
             writer.writerow([clip_name, text])
             kept += 1
@@ -223,7 +248,7 @@ def main():
     print(f"  Output  : {final_dir}")
     print(f"  Speaker : {args.speaker}")
     print(f"  Model   : {args.model}")
-    print(f"  Clips   : {args.min_sec}s – {args.max_sec}s")
+    print(f"  Clips   : {args.min_sec}s – {args.max_sec}s at {args.sample_rate or 'source'} Hz")
     print("=" * 55)
 
     # Run pipeline
@@ -237,8 +262,8 @@ def main():
     print(f"  Dataset: {final_dir}/wavs/")
     print(f"  Labels:  {final_dir}/metadata.csv")
     print("=" * 55)
-    print("\n  Next step: point your TTS trainer (Coqui/XTTS/Piper)")
-    print(f"  at: {final_dir}")
+    print("\n  Next step: run ./finetune_ft_tts.sh to fine-tune F5-TTS on this dataset.")
+    print(f"  Intermediate files (raw download, denoised audio, segments.json) are in {workdir}")
 
 if __name__ == "__main__":
     main()
