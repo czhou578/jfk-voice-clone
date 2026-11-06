@@ -36,7 +36,7 @@ GRAD_ACCUM=1
 # Each experiment gets its own checkpoint dir. The fork's finetune_cli.py
 # writes to $F5TTS_CKPT_ROOT/{DATASET_NAME}; the script sets that variable to
 # $CKPT_ROOT and archives each finished run under its experiment tag.
-EXP_TAG="e${EPOCHS}_b${BATCH_SIZE}"    # unique tag for this experiment
+EXP_TAG="e${EPOCHS}_b${BATCH_SIZE}_lr${LEARNING_RATE}"  # unique tag for this experiment
 CKPT_BASE="$CKPT_ROOT/$DATASET_NAME"   # the active run
 CKPT_DIR="$CKPT_ROOT/${DATASET_NAME}_${EXP_TAG}"  # where the finished run is archived
 
@@ -276,6 +276,7 @@ accelerate launch --config_file "$ACCEL_CONFIG" src/f5_tts/train/finetune_cli.py
     --epochs          $EPOCHS \
     --num_warmup_updates 200 \
     --save_per_updates 1000 \
+    --keep_last_n_checkpoints 1 \
     --last_per_updates  2000 \
     --dataset_name    "$DATASET_NAME" \
     --tokenizer       custom \
