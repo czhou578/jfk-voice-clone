@@ -7,3 +7,6 @@ checkpoints/
 # Python caches
 __pycache__/
 *.pyc
+
+# Generated audio from run_inference.py; curated samples live in samples/
+jfk_outputs/

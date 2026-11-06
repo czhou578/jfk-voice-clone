@@ -394,7 +394,7 @@ JFK_CKPT_DIR=/mnt/models/jfk .venv/bin/python run_inference.py --text "..."
 | `--ref_clip` | `jfk_dataset/wavs/jfk_00206.wav` | Reference WAV clip |
 | `--ref_text` | from `metadata.csv` | Exact transcript of the reference clip; needed for clips outside the dataset |
 | `--output` | `output.wav` | Output filename inside the output folder |
-| `--output_dir` | `jfk_outputs/` | Output folder |
+| `--output_dir` | `jfk_outputs/` | Output folder; not committed |
 | `--seed` | random | Random seed for reproducible output |
 | `--nfe` | `32` | Flow-matching steps. Higher is better and slower; 64 for final renders |
 | `--pause` | `0.5` | Silence in seconds between sentences |
@@ -407,7 +407,7 @@ JFK_CKPT_DIR=/mnt/models/jfk .venv/bin/python run_inference.py --text "..."
 | `jfk_undelivered_speech.txt` | The Dallas Trade Mart speech; use `--mode sentences` |
 | `covfefe_speech.txt` | The 2025 inaugural address, prose; use `--mode sentences` |
 | `taylor_swift_lyrics.txt` | "Blank Space" lyrics; use `--mode lines` |
-| `jfk_outputs/*.wav` | Outputs from the experiment runs, named by run settings |
+| `samples/*.wav` | Outputs from the experiment runs, named by run settings |
 
 ---
 
@@ -428,7 +428,7 @@ jfk-voice-clone/
 ├── EXPERIMENTATION_RESULTS.md   # Final losses of each run
 ├── requirements.txt             # Python dependencies for dataset preparation only
 ├── .gitattributes               # Git LFS rules: *.wav, *.pt, *.safetensors, jfk_dataset/**
-├── .gitignore                   # Ignores .venv/ and checkpoints/
+├── .gitignore                   # Ignores .venv/, checkpoints/, and jfk_outputs/
 ├── .gitmodules                  # F5-TTS submodule reference
 ├── .github/dependabot.yml       # Dependabot: weekly checks for GitHub Actions and pip updates
 ├── .github/workflows/ci.yml     # CI: static checks on every PR; auto-merges Dependabot PRs that pass
@@ -447,7 +447,8 @@ jfk-voice-clone/
 │
 ├── F5-TTS/                      # Git submodule: F5-TTS fork at 1.1.17 + 3 commits
 ├── jfk_dataset/                 # 1,151 clips and metadata.csv (Git LFS)
-├── jfk_outputs/                 # Generated audio (Git LFS)
+├── samples/                     # Audio from the experiment runs (Git LFS)
+├── jfk_outputs/                 # Your generated audio (not committed)
 ├── checkpoints/                 # Downloaded, slimmed, and training checkpoints (not committed)
 └── .venv/                       # Local Python environment (not committed)
 ```
