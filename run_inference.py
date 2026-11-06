@@ -31,8 +31,8 @@ import torch
 # ─────────────────────────────────────────────────────────────
 PROJECT_DIR    = os.path.abspath(os.path.dirname(__file__))
 F5_REPO        = os.path.join(PROJECT_DIR, "F5-TTS")
-# Checkpoints live under ./checkpoints by default. Set JFK_CKPT_DIR to override,
-# for example JFK_CKPT_DIR=/root/F5-TTS-ckpts on a RunPod training box.
+# Checkpoints live under ./checkpoints by default, where finetune_ft_tts.sh
+# also writes them. Set JFK_CKPT_DIR to search another folder.
 CKPT_DIR       = os.environ.get("JFK_CKPT_DIR", os.path.join(PROJECT_DIR, "checkpoints"))
 DATASET_DIR    = os.path.join(PROJECT_DIR, "jfk_dataset")
 

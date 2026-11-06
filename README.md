@@ -148,12 +148,13 @@ Both outputs transcribe word for word to the input text.
 - A CUDA GPU with 3 GB free, or a CPU with 4 GB of RAM free
 - 8 GB of disk for the environment and one checkpoint
 
-### For training (phases 1 and 2)
+### For training (phase 2)
 
-- **GPU**: NVIDIA GPU with at least 24 GB VRAM (tested on RTX 4090 and RTX 4000 Ada on RunPod)
-- **OS**: Linux. The training script uses `apt-get` and bash and expects the repo at `/workspace/jfk-voice-clone`.
-- **CUDA**: 12.1 or later. The script pins torch 2.4.0+cu121 for x86 RunPod images.
-- **Storage**: at least 40 GB free. A RunPod 40 GB volume is the minimum that works.
+- **Machine**: the DGX Spark, with the same `.venv` as inference. The training script adds `tensorboard` to it with `uv`.
+- **GPU memory**: about 20 GB at batch size 6000. Stop the vLLM server first; it holds most of the unified memory.
+- **Storage**: about 12 GB per run under `checkpoints/`.
+
+Phase 1 has its own dependencies, listed in its section below.
 
 ---
 
@@ -264,39 +265,38 @@ If you have no local GPU for dataset preparation, use the Colab notebook:
 
 ## Phase 2 — Fine-Tuning F5-TTS
 
-This phase fine-tunes the F5-TTS base model on the JFK dataset. Run it on a machine with a 24 GB GPU, such as a RunPod pod with the repo at `/workspace/jfk-voice-clone`.
+This phase fine-tunes the F5-TTS base model on the JFK dataset. Run it on the DGX Spark from the repo folder, with the `.venv` from [Generate speech now](#generate-speech-now) step 3 in place.
 
 ### Step 2.1 — Configure the run
 
 Open `finetune_ft_tts.sh` and edit the config block at the top. The defaults are the best settings from `EXPERIMENTATION_RESULTS.md`:
 
 ```bash
-DATASET_PATH="/workspace/jfk-voice-clone/jfk_dataset"
-F5_REPO="/workspace/jfk-voice-clone/F5-TTS"
-CONDA_ENV="f5-tts"           # venv created at /workspace/f5-tts
 EPOCHS=30                    # 10 for a quick baseline, 30 for the best accent
 LEARNING_RATE=1e-5
-BATCH_SIZE=6000              # frames; 6000 fits a 24 GB card, 4000 fits 16 GB
+BATCH_SIZE=6000              # frames per batch; 6000 was the best run, about 20 GB of GPU memory
 GRAD_ACCUM=1
 ```
 
-Each run gets a tag `e${EPOCHS}_b${BATCH_SIZE}`. The trainer writes to `/root/F5-TTS-ckpts/jfk`, and the script moves that folder to `/root/F5-TTS-ckpts/jfk_<tag>` when training ends. If that archive folder exists, the script appends a timestamp instead of overwriting it.
+The paths derive from the script's own location: the dataset at `jfk_dataset/`, the submodule at `F5-TTS/`, the environment at `.venv/`, and the checkpoints at `checkpoints/`.
+
+Each run gets a tag `e${EPOCHS}_b${BATCH_SIZE}`. The trainer writes to `checkpoints/jfk`, and the script moves that folder to `checkpoints/jfk_<tag>` when training ends. If that archive folder exists, the script appends a timestamp instead of overwriting it.
 
 ### Step 2.2 — Run the script
 
 ```bash
-chmod +x finetune_ft_tts.sh
+DRY_RUN=1 ./finetune_ft_tts.sh   # checks the environment and the dataset, stops before training
 ./finetune_ft_tts.sh
 ```
 
 ### What the script does
 
-1. **Validates the F5-TTS submodule.** It does not pull, to avoid a detached HEAD.
-2. **Sets up the environment.** Installs `python3-venv` and `ffmpeg`, creates `/workspace/f5-tts`, installs torch 2.4.0+cu121, F5-TTS (`pip install -e .`), `accelerate`, and `tensorboard`. It skips each step whose result already exists, so a second run does not download torch again.
-3. **Prepares the dataset.** Pulls LFS files, rejects LFS pointer files, and writes `F5-TTS/data/jfk/metadata.csv` with absolute paths to the WAV files in `jfk_dataset/wavs/`. It does not copy the WAV files.
+1. **Checks the F5-TTS submodule.** It stops with a hint when the submodule is missing.
+2. **Checks the environment.** It activates `.venv`, verifies torch, CUDA, F5-TTS, and `accelerate`, and installs `tensorboard` with `uv` when it is missing.
+3. **Prepares the dataset.** Pulls the LFS files when they are still pointers, and writes `F5-TTS/data/jfk/metadata.csv` with absolute paths to the WAV files in `jfk_dataset/wavs/`. It does not copy the WAV files.
 4. **Runs `prepare_csv_wavs.py`.** This writes `raw.arrow`, `duration.json`, and `vocab.txt`. The vocab is a copy of the pretrained Emilia vocab, so the fine-tuned model keeps the same token set as the base model. The script skips this step when `raw.arrow` is newer than `metadata.csv`.
-5. **Writes the accelerate config.** Single GPU, fp16 mixed precision.
-6. **Launches training.** It first moves any old `/root/F5-TTS-ckpts/jfk` to an archive folder named after that run's tag. A crashed run keeps its checkpoints this way.
+5. **Writes the accelerate config** to `checkpoints/accelerate_config.yaml`. Single GPU, fp16 mixed precision. Your own accelerate default config stays untouched.
+6. **Launches training.** It points the fork at `checkpoints/` through `F5TTS_CKPT_ROOT`, then moves any old `checkpoints/jfk` to an archive folder named after that run's tag. A crashed run keeps its checkpoints this way.
 
 Training settings:
 
@@ -311,13 +311,13 @@ Training settings:
 | Mixed precision | `fp16` |
 | Logger | TensorBoard |
 
-Expected training time: about 1 minute per epoch on an RTX 4090 for 1,151 clips.
+Training time on the GB10 is not yet measured. An RTX 4090 took about 1 minute per epoch for 1,151 clips.
 
 ### The fork's changes
 
-The F5-TTS submodule is the fork `czhou578/F5-TTS` at upstream 1.1.17 plus three commits:
+The F5-TTS submodule is the fork `czhou578/F5-TTS` at upstream 1.1.17 plus three changes:
 
-- `finetune_cli.py` writes checkpoints to `/root/F5-TTS-ckpts/<dataset>` instead of the package's `ckpts/` folder.
+- `finetune_cli.py` writes checkpoints to `$F5TTS_CKPT_ROOT/<dataset>` when that variable is set, else to upstream's `ckpts/<dataset>`. The training script sets it to `checkpoints/`.
 - `trainer.py` deletes the older `model_*.pt` files each time it saves `model_last.pt`, to save disk.
 - `pyproject.toml` drops the `pydantic` pin so that a current gradio installs.
 
@@ -328,15 +328,15 @@ Upstream is 28 commits ahead, at release 1.1.22. Inference with this fork works 
 The trainer writes TensorBoard logs under `runs/` inside the F5-TTS folder:
 
 ```bash
-tensorboard --logdir /workspace/jfk-voice-clone/F5-TTS/runs
+.venv/bin/tensorboard --logdir F5-TTS/runs
 ```
 
 ### Step 2.4 — Find and upload the checkpoints
 
-While training runs, checkpoints are in `/root/F5-TTS-ckpts/jfk/`:
+While training runs, checkpoints are in `checkpoints/jfk/`:
 
 ```
-/root/F5-TTS-ckpts/jfk/
+checkpoints/jfk/
 ├── .exp_tag                      # the run's tag, used to name the archive folder
 ├── model_last.pt                 # latest, 5 GB, holds optimizer state
 ├── model_6000.pt                 # saved every 1000 updates, older ones deleted
@@ -346,10 +346,9 @@ While training runs, checkpoints are in `/root/F5-TTS-ckpts/jfk/`:
 After the script moves the folder, upload the run to HuggingFace:
 
 ```bash
-source /workspace/f5-tts/bin/activate
-python -c "
+.venv/bin/python -c "
 from huggingface_hub import HfApi
-HfApi().upload_folder(folder_path='/root/F5-TTS-ckpts/jfk_e30_b6000', repo_id='czhou578/jfk-f5tts-30epochs-b6000', repo_type='model')
+HfApi().upload_folder(folder_path='checkpoints/jfk_e30_b6000', repo_id='czhou578/jfk-f5tts-30epochs-b6000', repo_type='model')
 "
 ```
 
@@ -376,10 +375,10 @@ To use another clip, pass `--ref_clip` and `--ref_text` together. Pick a clean c
 
 The script searches `checkpoints/` recursively. It skips `backup` folders and `pretrained_*` files. It accepts `.safetensors` files from `slim_checkpoint.py` and full `.pt` training checkpoints. With no `--checkpoint`, it prefers `model_last_ema.safetensors`, then `model_last.pt`, then the highest numbered `model_<step>` file.
 
-Set `JFK_CKPT_DIR` to search another folder, for example on a RunPod box:
+Set `JFK_CKPT_DIR` to search another folder, for example an external drive:
 
 ```bash
-JFK_CKPT_DIR=/root/F5-TTS-ckpts python run_inference.py --text "..."
+JFK_CKPT_DIR=/mnt/models/jfk .venv/bin/python run_inference.py --text "..."
 ```
 
 ### All arguments
@@ -427,7 +426,7 @@ jfk-voice-clone/
 ├── prepare_tts_colab.ipynb      # Phase 1: Colab notebook version
 ├── update_nb.py                 # Utility: updates the Colab notebook dependencies
 │
-├── finetune_ft_tts.sh           # Phase 2: fine-tuning script (RunPod paths)
+├── finetune_ft_tts.sh           # Phase 2: fine-tuning script (DGX Spark)
 ├── slim_checkpoint.py           # Phase 3: extract inference weights from a training checkpoint
 ├── run_inference.py             # Phase 3: inference script
 │
@@ -438,7 +437,7 @@ jfk-voice-clone/
 ├── F5-TTS/                      # Git submodule: F5-TTS fork at 1.1.17 + 3 commits
 ├── jfk_dataset/                 # 1,151 clips and metadata.csv (Git LFS)
 ├── jfk_outputs/                 # Generated audio (Git LFS)
-├── checkpoints/                 # Downloaded and slimmed checkpoints (not committed)
+├── checkpoints/                 # Downloaded, slimmed, and training checkpoints (not committed)
 └── .venv/                       # Local Python environment (not committed)
 ```
 
@@ -455,10 +454,10 @@ jfk-voice-clone/
 | `torchaudio.load` fails or complains about torchcodec | Install `torch`, `torchaudio`, and `torchcodec` together from the same index |
 | Inference killed, or the machine swaps | Run inside `systemd-run --user --scope -p MemoryMax=8G -- choom -n 1000 -- ...`, or add `--device cpu` |
 | `ModuleNotFoundError: No module named 'soundfile'` | Run `uv pip install --python .venv/bin/python -e ./F5-TTS` |
-| CUDA out of memory during training | Reduce `BATCH_SIZE` in `finetune_ft_tts.sh` to `4000` or `2000` |
-| Out of disk space during training | Use at least 40 GB of storage |
+| CUDA out of memory during training | Stop the vLLM server, or reduce `BATCH_SIZE` in `finetune_ft_tts.sh` to `4000` or `2000` |
+| Out of disk space during training | Each run needs about 12 GB under `checkpoints/`. Delete archived runs that you have uploaded |
 | `raw.arrow not created` during training | Check that the paths in `metadata.csv` point to existing WAV files |
-| Detached HEAD in F5-TTS | The script skips `git pull` on purpose |
+| Detached HEAD in F5-TTS | Normal for a submodule. Run `git submodule update --init` to restore the pinned commit |
 | Poor voice quality | Use the 30-epoch checkpoint, a longer clean reference clip, and `--nfe 64` |
 | Output repeats or mumbles | A sign of overfitting. Use fewer epochs, or lower the learning rate; see `EXPERIMENTATION_RESULTS.md` |
 

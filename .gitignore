@@ -1,7 +1,7 @@
 # Local Python environment
 .venv/
 
-# Downloaded or slimmed checkpoints (several GB; the LFS rules would track them)
+# Downloaded, slimmed, and training checkpoints (several GB; the LFS rules would track them)
 checkpoints/
 
 # Python caches
