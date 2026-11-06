@@ -16,12 +16,11 @@ The pipeline has three phases:
 | 2. Fine-tuning | `finetune_ft_tts.sh` | Converts the dataset for F5-TTS, configures training, and launches fine-tuning |
 | 3. Inference | `run_inference.py` | Reads new text with the fine-tuned model |
 
-Two helper scripts support phase 3:
+One helper script supports phase 3:
 
 | Script | What it does |
 |--------|--------------|
 | `slim_checkpoint.py` | Extracts the inference weights from a 5 GB training checkpoint, 0.63 GB in float16 |
-| `update_nb.py` | Updates the dependency cell of the Colab notebook |
 
 ---
 
@@ -435,7 +434,6 @@ jfk-voice-clone/
 │
 ├── prepare_tts_dataset.py       # Phase 1: dataset preparation pipeline
 ├── prepare_tts_colab.ipynb      # Phase 1: Colab notebook version
-├── update_nb.py                 # Utility: updates the Colab notebook dependencies
 │
 ├── finetune_ft_tts.sh           # Phase 2: fine-tuning script (DGX Spark)
 ├── slim_checkpoint.py           # Phase 3: extract inference weights from a training checkpoint
