@@ -5,11 +5,13 @@ F5-TTS Inference — Fine-tuned JFK Voice
 Run this after fine-tuning to synthesize speech in JFK's voice.
 
 Usage:
-    # Single sentence
+    # One sentence, or several in one process (the model loads once)
     python run_inference.py --text "Ask not what your country can do for you."
+    python run_inference.py --text "First sentence." --text "Second sentence."
 
-    # From a text file (one sentence per line, or paragraphs separated by blank lines)
-    python run_inference.py --file speech.txt
+    # From a text file. Prose: one model call per paragraph. Lyrics: one per line.
+    python run_inference.py --file speech.txt --mode paragraphs
+    python run_inference.py --file lyrics.txt --mode lines
 
     # With custom settings
     python run_inference.py --file speech.txt --checkpoint 6000 --nfe 64
@@ -57,7 +59,7 @@ def parse_args():
     )
     # Text input: either --text or --file (one required)
     text_group = parser.add_mutually_exclusive_group(required=True)
-    text_group.add_argument("--text", help="Text to synthesize (single sentence)")
+    text_group.add_argument("--text", action="append", help="Text to synthesize. Repeat the flag for several sentences in one run.")
     text_group.add_argument("--file", help="Path to a text file with sentences/paragraphs")
 
     parser.add_argument("--checkpoint", default=None,  help="Checkpoint step number (e.g. 2000). Defaults to latest.")
@@ -69,19 +71,27 @@ def parse_args():
     parser.add_argument("--output",     default="output.wav", help="Output filename (or prefix for multi-sentence)")
     parser.add_argument("--output_dir", default=OUTPUT_DIR, help="Folder for the output files (default: jfk_outputs/ in the repo)")
     parser.add_argument("--seed",       type=int, default=None, help="Random seed for reproducible output (default: a new random seed per sentence)")
-    parser.add_argument("--nfe",        type=int, default=32, help="NFE steps (higher = better quality, slower)")
+    parser.add_argument("--nfe",        type=int, default=32, help="Flow-matching steps: 16 for drafts, 32 default, 64 for final renders (default: 32)")
     parser.add_argument("--pause",      type=float, default=0.5, help="Pause in seconds between sentences (default: 0.5)")
     parser.add_argument("--split",      action="store_true", help="Save each sentence as a separate WAV file")
-    parser.add_argument("--mode",       default="lines", choices=["lines", "sentences"],
-                        help="'lines': one TTS call per line (good for lyrics). 'sentences': split on punctuation (good for prose/speeches).")
+    parser.add_argument("--mode",       default="lines", choices=["lines", "sentences", "paragraphs"],
+                        help="How --file is split into model calls. 'lines': one call per line (lyrics). "
+                             "'paragraphs': one call per blank-line-separated paragraph; F5-TTS chunks and cross-fades inside it (prose, natural joins). "
+                             "'sentences': one call per sentence, with --pause between them (prose with fixed pauses).")
     return parser.parse_args()
 
 
 def read_text_file(filepath, mode="lines"):
-    """Read a text file and return a list of TTS units.
+    """Read a text file and return a list of TTS units, one model call each.
 
-    mode='lines'     : one entry per non-empty line (good for lyrics).
-    mode='sentences' : split on sentence-ending punctuation (good for prose/speeches).
+    mode='lines'      : one entry per non-empty line (lyrics).
+    mode='paragraphs' : one entry per paragraph; paragraphs are separated by
+                        blank lines, and their lines are joined (prose).
+                        F5-TTS splits a long paragraph into chunks of about
+                        200 characters and cross-fades them, so this mode
+                        gives natural joins instead of fixed pauses.
+    mode='sentences'  : one entry per sentence, split on .!? (prose, when a
+                        fixed --pause between sentences is wanted).
     """
     with open(filepath, "r", encoding="utf-8") as f:
         content = f.read()
@@ -89,7 +99,7 @@ def read_text_file(filepath, mode="lines"):
     if mode == "lines":
         return [line.strip() for line in content.splitlines() if line.strip()]
 
-    # sentences mode: join non-empty lines within each paragraph, then split on .!?
+    # paragraphs and sentences: join non-empty lines within each paragraph
     paragraphs = []
     current = []
     for line in content.splitlines():
@@ -100,6 +110,9 @@ def read_text_file(filepath, mode="lines"):
             current = []
     if current:
         paragraphs.append(" ".join(current))
+
+    if mode == "paragraphs":
+        return paragraphs
 
     sentences = []
     for para in paragraphs:
@@ -199,8 +212,8 @@ def main():
         sentences = read_text_file(args.file, mode=args.mode)
         source_label = f"File: {args.file} ({len(sentences)} units, mode={args.mode})"
     else:
-        sentences = [args.text.strip()] if args.text.strip() else []
-        source_label = f"Text: {args.text}"
+        sentences = [t.strip() for t in args.text if t.strip()]
+        source_label = f"Text: {' | '.join(sentences)}"
     if not sentences:
         raise SystemExit(f"No text to synthesize in {args.file or '--text'}.")
 
@@ -297,7 +310,7 @@ def main():
 
     print(f"\n{'=' * 50}")
     print(f"  ✅ Saved to: {output_path}")
-    print(f"     Sentences : {len(sentences)}")
+    print(f"     Units     : {len(sentences)}")
     print(f"     Sample rate: {sr}Hz")
     print(f"     Duration: {len(final_wav)/sr:.2f}s")
     if args.split and len(sentences) > 1:

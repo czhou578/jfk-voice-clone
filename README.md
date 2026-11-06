@@ -121,12 +121,20 @@ The output is float16 by default. The F5-TTS loader runs the model in float16 on
 
 The output lands in `jfk_outputs/output.wav` at 24 kHz. The script finds the slim checkpoint under `checkpoints/` on its own.
 
-Read a whole speech from a file. Use `--mode sentences` for prose and `--mode lines` for lyrics:
+Each run loads the model, which takes about 20 s. Pass several sentences in one run to pay that once:
 
 ```bash
-.venv/bin/python run_inference.py --file jfk_undelivered_speech.txt --mode sentences --output undelivered.wav
+.venv/bin/python run_inference.py --text "Ask not what your country can do for you." --text "We choose to go to the Moon." --output eval.wav
+```
+
+Read a whole speech from a file. Use `--mode paragraphs` for prose and `--mode lines` for lyrics:
+
+```bash
+.venv/bin/python run_inference.py --file jfk_undelivered_speech.txt --mode paragraphs --output undelivered.wav
 .venv/bin/python run_inference.py --file taylor_swift_lyrics.txt --mode lines --output blank_space.wav
 ```
+
+Pick the number of flow-matching steps with `--nfe`: 16 for a quick draft, 32 by default, 64 for a final render. The synthesis time scales with it.
 
 Measured on the DGX Spark for one 5-second sentence at 32 NFE steps:
 
@@ -384,9 +392,9 @@ JFK_CKPT_DIR=/mnt/models/jfk .venv/bin/python run_inference.py --text "..."
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--text` | | Text to synthesize. Use this or `--file` |
+| `--text` | | Text to synthesize. Repeat the flag for several sentences. Use this or `--file` |
 | `--file` | | Text file to synthesize |
-| `--mode` | `lines` | `lines`: one TTS call per line, for lyrics. `sentences`: split on `.!?`, for prose |
+| `--mode` | `lines` | How `--file` is split into model calls. `lines`: one per line, for lyrics. `paragraphs`: one per blank-line-separated paragraph, for prose; F5-TTS chunks and cross-fades inside it. `sentences`: one per sentence, with `--pause` between them |
 | `--checkpoint` | latest | Checkpoint step number, for example `6000` |
 | `--ckpt_dir` | `./checkpoints` | Folder to search; `JFK_CKPT_DIR` also sets it |
 | `--ckpt_file` | | One checkpoint file; skips the search |
@@ -396,7 +404,7 @@ JFK_CKPT_DIR=/mnt/models/jfk .venv/bin/python run_inference.py --text "..."
 | `--output` | `output.wav` | Output filename inside the output folder |
 | `--output_dir` | `jfk_outputs/` | Output folder |
 | `--seed` | random | Random seed for reproducible output |
-| `--nfe` | `32` | Flow-matching steps. Higher is better and slower; 64 for final renders |
+| `--nfe` | `32` | Flow-matching steps. 16 for drafts, 32 default, 64 for final renders |
 | `--pause` | `0.5` | Silence in seconds between sentences |
 | `--split` | off | Also save each sentence as its own file, `name_001.wav`, `name_002.wav`, ... |
 
@@ -404,8 +412,8 @@ JFK_CKPT_DIR=/mnt/models/jfk .venv/bin/python run_inference.py --text "..."
 
 | File | Use |
 |------|-----|
-| `jfk_undelivered_speech.txt` | The Dallas Trade Mart speech; use `--mode sentences` |
-| `covfefe_speech.txt` | The 2025 inaugural address, prose; use `--mode sentences` |
+| `jfk_undelivered_speech.txt` | The Dallas Trade Mart speech; use `--mode paragraphs` |
+| `covfefe_speech.txt` | The 2025 inaugural address, prose; use `--mode paragraphs` |
 | `taylor_swift_lyrics.txt` | "Blank Space" lyrics; use `--mode lines` |
 | `jfk_outputs/*.wav` | Outputs from the experiment runs, named by run settings |
 
