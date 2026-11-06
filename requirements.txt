@@ -1,6 +1,10 @@
+# Python dependencies for phase 1, dataset preparation. Inference and training
+# use the F5-TTS editable install instead (README, "Generate speech now").
+# Versions are the ones from the last working Colab run; Dependabot proposes updates.
+#
 # System dependencies required for PyAV:
 # sudo apt-get update && sudo apt-get install -y pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libavfilter-dev libswscale-dev libswresample-dev
-yt-dlp
-resemble-enhance
-whisperx
-soundfile
+yt-dlp==2026.3.17
+resemble-enhance==0.0.1
+whisperx==3.2.0
+soundfile==0.12.1
