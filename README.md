@@ -265,7 +265,7 @@ If you have no local GPU for dataset preparation, use the Colab notebook:
 
 1. Upload `prepare_tts_colab.ipynb` to Google Colab
 2. Set the runtime to GPU (T4)
-3. Run all cells in order. The notebook installs dependencies, writes the script, and runs the pipeline
+3. Run all cells in order. The notebook downloads `prepare_tts_dataset.py` and `requirements.txt` from this repo, installs the dependencies, and runs the pipeline
 4. Download the resulting `jfk_dataset/` folder
 
 ---
