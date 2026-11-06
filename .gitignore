@@ -1,0 +1,9 @@
+# Local Python environment
+.venv/
+
+# Downloaded or slimmed checkpoints (several GB; the LFS rules would track them)
+checkpoints/
+
+# Python caches
+__pycache__/
+*.pyc

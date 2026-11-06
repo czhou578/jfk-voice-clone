@@ -6,8 +6,8 @@
 # Expected training time: 2-4 hours for 1151 clips @ 10 epochs
 #
 # USAGE:
-#   chmod +x finetune_f5tts.sh
-#   ./finetune_f5tts.sh
+#   chmod +x finetune_ft_tts.sh
+#   ./finetune_ft_tts.sh
 #
 # REQUIREMENTS:
 #   - CUDA 12.1+ drivers installed
