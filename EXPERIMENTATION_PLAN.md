@@ -70,12 +70,8 @@ Then run:
 ./finetune_ft_tts.sh
 ```
 
-> [!IMPORTANT]
-> Each run **overwrites** the previous checkpoint at `/root/F5-TTS-ckpts/jfk/`. Before starting a new experiment, save the previous checkpoint:
-> ```bash
-> # Save previous run before starting new one
-> cp -r /root/F5-TTS-ckpts/jfk /root/F5-TTS-ckpts/jfk_e10_b4000_lr1e5
-> ```
+> [!NOTE]
+> The script archives the previous run as `checkpoints/jfk_<tag>` before it starts, and never overwrites an archive. No manual copy is needed.
 
 ---
 
@@ -84,7 +80,7 @@ Then run:
 For each experiment, generate the **same set of test sentences** and compare:
 
 ```bash
-source /workspace/f5-tts/bin/activate
+source .venv/bin/activate
 
 # Standard evaluation sentences
 python run_inference.py --text "Ask not what your country can do for you." --output "eval_ask_not.wav"
@@ -117,7 +113,7 @@ python run_inference.py --text "Today we celebrate the birthday of artificial in
 ## Naming Convention for Saved Checkpoints
 
 ```
-/root/F5-TTS-ckpts/
+checkpoints/
 ├── jfk/                          ← active (latest run)
 ├── jfk_e10_b4000_lr1e5/          ← baseline
 ├── jfk_e30_b4000_lr1e5/          ← round 1 winner
@@ -130,12 +126,12 @@ python run_inference.py --text "Today we celebrate the birthday of artificial in
 Once you find the best combination, upload to HuggingFace:
 
 ```bash
-source /workspace/f5-tts/bin/activate
+source .venv/bin/activate
 python -c "
 from huggingface_hub import HfApi
 api = HfApi()
 api.upload_folder(
-    folder_path='/root/F5-TTS-ckpts/jfk',
+    folder_path='checkpoints/jfk_e30_b6000',
     repo_id='czhou578/jfk-voice-clone-f5tts',
     repo_type='model'
 )

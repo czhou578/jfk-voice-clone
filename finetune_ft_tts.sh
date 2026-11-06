@@ -1,100 +1,102 @@
 #!/usr/bin/env bash
 # =============================================================================
-# F5-TTS Fine-tuning Pipeline for JFK Voice Dataset
+# F5-TTS Fine-tuning Pipeline for the JFK Voice Dataset
 # =============================================================================
-# RTX 4090 (24GB VRAM) optimized settings
-# Expected training time: 2-4 hours for 1151 clips @ 10 epochs
+# Runs on the DGX Spark (GB10) from the repo folder. It reuses the .venv that
+# inference uses (README.md, "Generate speech now", step 3).
 #
 # USAGE:
-#   chmod +x finetune_ft_tts.sh
-#   ./finetune_ft_tts.sh
+#   ./finetune_ft_tts.sh              # full run
+#   DRY_RUN=1 ./finetune_ft_tts.sh    # check the setup, stop before training
 #
 # REQUIREMENTS:
-#   - CUDA 12.1+ drivers installed
-#   - conda or python 3.10/3.11 available
-#   - Your dataset at ~/jfk_dataset/ (wavs/ + metadata.csv)
+#   - .venv with torch, torchaudio, torchcodec from the cu130 index and
+#     F5-TTS installed editable (README.md step 3)
+#   - uv on the PATH, to add accelerate and tensorboard to .venv
+#   - The dataset at jfk_dataset/ (wavs/ + metadata.csv), pulled with git lfs
+#   - About 12 GB of disk per run under checkpoints/
+#   - About 20 GB of GPU memory at batch size 6000. Stop the vLLM server first.
 # =============================================================================
 
 set -e  # Exit on any error
 
 # ─────────────────────────────────────────────────────────────
-# CONFIG — edit these to match your paths
+# CONFIG — edit these to change a run
 # ─────────────────────────────────────────────────────────────
-DATASET_PATH="/workspace/jfk-voice-clone/jfk_dataset"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DATASET_PATH="$PROJECT_DIR/jfk_dataset"
 DATASET_NAME="jfk"                     # name used internally by F5-TTS
-F5_REPO="/workspace/jfk-voice-clone/F5-TTS"    # where to clone the repo
-CONDA_ENV="f5-tts"                     # virtual environment name
-EPOCHS=30                              # start with 10, increase to 20-30 for better accent fidelity
+F5_REPO="$PROJECT_DIR/F5-TTS"          # the submodule
+VENV_DIR="$PROJECT_DIR/.venv"          # the inference environment, reused for training
+CKPT_ROOT="$PROJECT_DIR/checkpoints"   # where run_inference.py looks for checkpoints
+EPOCHS=30                              # 10 for a quick baseline, 30 for the best accent
 LEARNING_RATE=1e-5
-BATCH_SIZE=6000                        # safe for RTX 4090 24GB
+BATCH_SIZE=6000                        # frames per batch; 6000 was the best run, about 20 GB of GPU memory
 GRAD_ACCUM=1
-# Each experiment gets its own checkpoint dir; the trainer always reads/writes
-# /root/F5-TTS-ckpts/{DATASET_NAME}, so we rename any prior run out of the way.
+# Each experiment gets its own checkpoint dir. The fork's finetune_cli.py
+# writes to $F5TTS_CKPT_ROOT/{DATASET_NAME}; the script sets that variable to
+# $CKPT_ROOT and archives each finished run under its experiment tag.
 EXP_TAG="e${EPOCHS}_b${BATCH_SIZE}"    # unique tag for this experiment
-CKPT_BASE="/root/F5-TTS-ckpts/$DATASET_NAME"  # path finetune_cli.py always uses
-CKPT_DIR="/root/F5-TTS-ckpts/${DATASET_NAME}_${EXP_TAG}"  # where we'll archive this run
+CKPT_BASE="$CKPT_ROOT/$DATASET_NAME"   # the active run
+CKPT_DIR="$CKPT_ROOT/${DATASET_NAME}_${EXP_TAG}"  # where the finished run is archived
 
 echo "=============================================="
 echo " F5-TTS Fine-tuning Pipeline"
 echo "=============================================="
+echo " Project : $PROJECT_DIR"
 echo " Dataset : $DATASET_PATH"
 echo " Epochs  : $EPOCHS"
-echo " GPU     : RTX 4000 Ada (20GB)"
 echo "=============================================="
 
 # ─────────────────────────────────────────────────────────────
-# STEP 1: Clone F5-TTS repo
+# STEP 1: Check the F5-TTS submodule
 # ─────────────────────────────────────────────────────────────
 echo ""
-echo "[1/6] Cloning F5-TTS (official repo)..."
-if [ ! -d "$F5_REPO" ]; then
-    echo "ERROR: F5-TTS repo missing"
+echo "[1/6] Checking the F5-TTS submodule..."
+if [ ! -f "$F5_REPO/pyproject.toml" ]; then
+    echo "ERROR: F5-TTS submodule is missing. Run: git submodule update --init"
     exit 1
-else
-    echo "    ✓ Repo existing, skipping pull to avoid detached HEAD detached issues..."
 fi
-cd "$F5_REPO"
+echo "    ✓ Submodule present at $F5_REPO"
 
 # ─────────────────────────────────────────────────────────────
-# STEP 2: Create conda environment + install dependencies
+# STEP 2: Check the Python environment
 # ─────────────────────────────────────────────────────────────
 echo ""
-echo "[2/6] Setting up python virtual environment: $CONDA_ENV"
+echo "[2/6] Checking the Python environment: $VENV_DIR"
 
-VENV_DIR="/workspace/$CONDA_ENV"
-
-# Each step below runs only when its result is missing, so a second run
-# of this script does not download torch again.
-if ! command -v ffmpeg >/dev/null 2>&1 || ! python3 -c "import ensurepip" >/dev/null 2>&1; then
-    apt-get update -y && apt-get install -y python3-venv ffmpeg || true
-fi
-
-if [ ! -d "$VENV_DIR" ]; then
-    python3 -m venv "$VENV_DIR"
+if [ ! -x "$VENV_DIR/bin/python" ]; then
+    echo "ERROR: $VENV_DIR not found."
+    echo "       Create it first, see README.md 'Generate speech now', step 3."
+    exit 1
 fi
 source "$VENV_DIR/bin/activate"
 
-if python -c "import torch, f5_tts, accelerate, tensorboard" >/dev/null 2>&1; then
-    echo "    ✓ Dependencies already installed, skipping pip"
-else
-    # Update pip
-    pip install --no-cache-dir --upgrade pip
+python - <<'EOF' || exit 1
+import sys
+try:
+    import torch, f5_tts
+except ImportError as e:
+    sys.exit(f"ERROR: {e}. Set up .venv first, see README.md 'Generate speech now', step 3.")
+if not torch.cuda.is_available():
+    sys.exit("ERROR: torch.cuda.is_available() is False. Install torch from the cu130 index, see README.md.")
+print(f"    ✓ torch {torch.__version__} on {torch.cuda.get_device_name(0)}")
+EOF
 
-    # Install PyTorch with CUDA 12.1 (works for RTX 4090)
-    pip install --no-cache-dir torch==2.4.0+cu121 torchaudio==2.4.0+cu121 \
-        --extra-index-url https://download.pytorch.org/whl/cu121
-
-    # Install F5-TTS and its dependencies
-    pip install --no-cache-dir -e .
-
-    # Install accelerate for training
-    pip install --no-cache-dir accelerate tensorboard
+# accelerate comes with F5-TTS. tensorboard does not; install it once. It has
+# no torch dependency, so the install leaves the torch packages alone.
+if ! python -c "import accelerate" >/dev/null 2>&1; then
+    echo "ERROR: accelerate is missing. Reinstall F5-TTS, see README.md step 3."
+    exit 1
 fi
-
+if ! python -c "import tensorboard" >/dev/null 2>&1; then
+    echo "    Installing tensorboard into $VENV_DIR..."
+    uv pip install --python "$VENV_DIR/bin/python" tensorboard
+fi
 echo "    ✓ Environment ready"
 
 # ─────────────────────────────────────────────────────────────
-# STEP 3: Validate and copy dataset into F5-TTS data directory
+# STEP 3: Validate the dataset and write the F5-TTS metadata
 # ─────────────────────────────────────────────────────────────
 echo ""
 echo "[3/6] Preparing dataset..."
@@ -102,23 +104,22 @@ echo "[3/6] Preparing dataset..."
 DATA_DIR="$F5_REPO/data/${DATASET_NAME}"
 mkdir -p "$DATA_DIR"
 
-# Ensure Git LFS files are pulled (metadata.csv AND wavs may be tracked by LFS)
-echo "    Ensuring Git LFS files are pulled..."
-REPO_ROOT="$(git -C "$DATASET_PATH" rev-parse --show-toplevel 2>/dev/null || echo "$DATASET_PATH")"
-(cd "$REPO_ROOT" && git lfs install 2>/dev/null && git lfs pull 2>/dev/null) || true
+is_lfs_pointer() { head -c 40 "$1" 2>/dev/null | grep -q "^version https://git-lfs"; }
 
-# Validate that metadata.csv is not a Git LFS pointer
-if head -1 "$DATASET_PATH/metadata.csv" | grep -q "^version https://git-lfs"; then
-    echo "ERROR: metadata.csv is a Git LFS pointer, not the actual file."
-    echo "       Run 'git lfs pull' in the dataset repo first."
+SAMPLE_WAV=$(ls "$DATASET_PATH/wavs/"*.wav 2>/dev/null | head -1)
+if [ -z "$SAMPLE_WAV" ]; then
+    echo "ERROR: no WAV files in $DATASET_PATH/wavs"
     exit 1
 fi
 
-# Validate that wav files are not Git LFS pointers
-SAMPLE_WAV=$(ls "$DATASET_PATH/wavs/"*.wav 2>/dev/null | head -1)
-if [ -n "$SAMPLE_WAV" ] && head -1 "$SAMPLE_WAV" | grep -q "^version https://git-lfs"; then
-    echo "ERROR: WAV files are Git LFS pointers, not actual audio."
-    echo "       Run 'git lfs pull' in the dataset repo first."
+# The dataset is in Git LFS. Pull it when the files are still pointers.
+if is_lfs_pointer "$DATASET_PATH/metadata.csv" || is_lfs_pointer "$SAMPLE_WAV"; then
+    echo "    Dataset files are Git LFS pointers, running git lfs pull..."
+    (cd "$PROJECT_DIR" && git lfs install --local && git lfs pull)
+fi
+if is_lfs_pointer "$DATASET_PATH/metadata.csv" || is_lfs_pointer "$SAMPLE_WAV"; then
+    echo "ERROR: the dataset files are still Git LFS pointers."
+    echo "       Install git-lfs (README.md step 2) and run 'git lfs pull'."
     exit 1
 fi
 
@@ -186,14 +187,16 @@ echo "    ✓ duration.json created"
 echo "    ✓ vocab.txt created"
 
 # ─────────────────────────────────────────────────────────────
-# STEP 5: Configure accelerate for single GPU (RTX 4090)
+# STEP 5: Write the accelerate config for a single GPU
 # ─────────────────────────────────────────────────────────────
 echo ""
-echo "[5/6] Configuring accelerate for single GPU..."
+echo "[5/6] Writing the accelerate config..."
 
-# Write accelerate config directly (avoids interactive prompt)
-mkdir -p ~/.cache/huggingface/accelerate/
-cat > ~/.cache/huggingface/accelerate/default_config.yaml << EOF
+# Single GPU, fp16 mixed precision. The file lives in the project, so your
+# own accelerate default config stays untouched.
+mkdir -p "$CKPT_ROOT"
+ACCEL_CONFIG="$CKPT_ROOT/accelerate_config.yaml"
+cat > "$ACCEL_CONFIG" << EOF
 compute_environment: LOCAL_MACHINE
 distributed_type: 'NO'
 downcast_bf16: 'no'
@@ -211,7 +214,7 @@ tpu_use_sudo: false
 use_cpu: false
 EOF
 
-echo "    ✓ Accelerate configured for single RTX 4000 Ada"
+echo "    ✓ Accelerate config written to $ACCEL_CONFIG"
 
 # ─────────────────────────────────────────────────────────────
 # STEP 6: Launch fine-tuning
@@ -220,8 +223,12 @@ echo ""
 echo "[6/6] Starting fine-tuning..."
 echo ""
 
-# Fix F5-TTS looking for _custom suffix
+# F5-TTS looks for data/<name>_custom
 ln -sfn "$DATA_DIR" "$F5_REPO/data/${DATASET_NAME}_custom"
+
+# The fork's finetune_cli.py writes the checkpoints under this folder, where
+# run_inference.py looks for them.
+export F5TTS_CKPT_ROOT="$CKPT_ROOT"
 
 echo "  Settings:"
 echo "    Epochs            : $EPOCHS"
@@ -230,9 +237,13 @@ echo "    Batch size        : $BATCH_SIZE (frame-based)"
 echo "    Grad accum steps  : $GRAD_ACCUM"
 echo ""
 
+if [ "${DRY_RUN:-0}" = "1" ]; then
+    echo "    DRY_RUN=1: setup complete, not starting training."
+    exit 0
+fi
+
 cd "$F5_REPO"
 
-# finetune_cli.py ALWAYS uses /root/F5-TTS-ckpts/{dataset_name} (hardcoded).
 # Move any prior run out of the way so we start completely fresh. The prior
 # run is archived, never deleted, so a crashed run keeps its checkpoints.
 # If the archive name is taken, a timestamp is appended.
@@ -248,13 +259,13 @@ archive_run() {
 if [ -d "$CKPT_BASE" ]; then
     # The previous run wrote its tag into .exp_tag. Fall back to a timestamp.
     PREV_TAG="$(cat "$CKPT_BASE/.exp_tag" 2>/dev/null || date +%Y%m%d_%H%M%S)"
-    archive_run "$CKPT_BASE" "/root/F5-TTS-ckpts/${DATASET_NAME}_${PREV_TAG}"
+    archive_run "$CKPT_BASE" "$CKPT_ROOT/${DATASET_NAME}_${PREV_TAG}"
 fi
 mkdir -p "$CKPT_BASE"
 echo "$EXP_TAG" > "$CKPT_BASE/.exp_tag"
 echo "    Checkpoints → $CKPT_BASE (fresh, will archive to $CKPT_DIR after training)"
 
-accelerate launch src/f5_tts/train/finetune_cli.py \
+accelerate launch --config_file "$ACCEL_CONFIG" src/f5_tts/train/finetune_cli.py \
     --exp_name        F5TTS_Base \
     --learning_rate   $LEARNING_RATE \
     --batch_size_per_gpu $BATCH_SIZE \
@@ -280,6 +291,8 @@ archive_run "$CKPT_BASE" "$CKPT_DIR"
 echo "=============================================="
 echo ""
 echo " To monitor training in real-time, open a second terminal and run:"
-echo "   tensorboard --logdir $F5_REPO/ckpts/F5TTS_Base/logs"
+echo "   $VENV_DIR/bin/tensorboard --logdir $F5_REPO/runs"
 echo ""
-echo " To run inference with your fine-tuned model, see: run_inference.py"
+echo " To run inference with your fine-tuned model:"
+echo "   $VENV_DIR/bin/python slim_checkpoint.py $CKPT_DIR/model_last.pt"
+echo "   $VENV_DIR/bin/python run_inference.py --text \"Ask not what your country can do for you.\""
