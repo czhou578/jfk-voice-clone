@@ -38,7 +38,6 @@ import torch
 # CONFIG — edit these paths
 # ─────────────────────────────────────────────────────────────
 PROJECT_DIR    = os.path.abspath(os.path.dirname(__file__))
-F5_REPO        = os.path.join(PROJECT_DIR, "F5-TTS")
 # Checkpoints live under ./checkpoints by default, where finetune_ft_tts.sh
 # also writes them. Set JFK_CKPT_DIR to search another folder.
 CKPT_DIR       = os.environ.get("JFK_CKPT_DIR", os.path.join(PROJECT_DIR, "checkpoints"))
@@ -232,9 +231,7 @@ def main():
     print(f"  NFE steps : {args.nfe}")
     print(f"  Seed      : {args.seed if args.seed is not None else 'random'}")
 
-    import sys
-    sys.path.insert(0, os.path.join(F5_REPO, "src"))
-
+    # F5-TTS comes from the editable install of the submodule (README step 3).
     from f5_tts.api import F5TTS
 
     if args.device == "auto":
