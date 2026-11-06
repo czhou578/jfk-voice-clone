@@ -115,10 +115,10 @@ python run_inference.py --text "Today we celebrate the birthday of artificial in
 ```
 checkpoints/
 ├── jfk/                          ← active (latest run)
-├── jfk_e10_b4000_lr1e5/          ← baseline
-├── jfk_e30_b4000_lr1e5/          ← round 1 winner
-├── jfk_e30_b6000_lr1e5/          ← round 2 test
-└── jfk_e30_b6000_lr3e5/          ← round 3 test
+├── jfk_e10_b4000_lr1e-5/         ← baseline
+├── jfk_e30_b4000_lr1e-5/         ← round 1 winner
+├── jfk_e30_b6000_lr1e-5/         ← round 2 test
+└── jfk_e30_b6000_lr3e-5/         ← round 3 test
 ```
 
 ## Upload Best Result
@@ -131,7 +131,7 @@ python -c "
 from huggingface_hub import HfApi
 api = HfApi()
 api.upload_folder(
-    folder_path='checkpoints/jfk_e30_b6000',
+    folder_path='checkpoints/jfk_e30_b6000_lr1e-5',
     repo_id='czhou578/jfk-voice-clone-f5tts',
     repo_type='model'
 )

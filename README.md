@@ -280,7 +280,7 @@ GRAD_ACCUM=1
 
 The paths derive from the script's own location: the dataset at `jfk_dataset/`, the submodule at `F5-TTS/`, the environment at `.venv/`, and the checkpoints at `checkpoints/`.
 
-Each run gets a tag `e${EPOCHS}_b${BATCH_SIZE}`. The trainer writes to `checkpoints/jfk`, and the script moves that folder to `checkpoints/jfk_<tag>` when training ends. If that archive folder exists, the script appends a timestamp instead of overwriting it.
+Each run gets a tag `e${EPOCHS}_b${BATCH_SIZE}_lr${LEARNING_RATE}`. The trainer writes to `checkpoints/jfk`, and the script moves that folder to `checkpoints/jfk_<tag>` when training ends. If that archive folder exists, the script appends a timestamp instead of overwriting it.
 
 ### Step 2.2 — Run the script
 
@@ -308,6 +308,7 @@ Training settings:
 | Epochs | `30` |
 | Warmup | `200` updates |
 | Save every | `1000` updates, last checkpoint every `2000` |
+| Kept on disk | the newest numbered checkpoint and `model_last.pt` |
 | Mixed precision | `fp16` |
 | Logger | TensorBoard |
 
@@ -315,11 +316,12 @@ Training time on the GB10 is not yet measured. An RTX 4090 took about 1 minute p
 
 ### The fork's changes
 
-The F5-TTS submodule is the fork `czhou578/F5-TTS` at upstream 1.1.17 plus three changes:
+The F5-TTS submodule is the fork `czhou578/F5-TTS` at upstream 1.1.17 plus two changes:
 
 - `finetune_cli.py` writes checkpoints to `$F5TTS_CKPT_ROOT/<dataset>` when that variable is set, else to upstream's `ckpts/<dataset>`. The training script sets it to `checkpoints/`.
-- `trainer.py` deletes the older `model_*.pt` files each time it saves `model_last.pt`, to save disk.
 - `pyproject.toml` drops the `pydantic` pin so that a current gradio installs.
+
+Disk cleanup uses upstream's `--keep_last_n_checkpoints 1`, which the training script passes. It keeps the newest numbered checkpoint and `model_last.pt`.
 
 Upstream is 28 commits ahead, at release 1.1.22. Inference with this fork works on current torch, so there is no need to update the submodule.
 
@@ -348,7 +350,7 @@ After the script moves the folder, upload the run to HuggingFace:
 ```bash
 .venv/bin/python -c "
 from huggingface_hub import HfApi
-HfApi().upload_folder(folder_path='checkpoints/jfk_e30_b6000', repo_id='czhou578/jfk-f5tts-30epochs-b6000', repo_type='model')
+HfApi().upload_folder(folder_path='checkpoints/jfk_e30_b6000_lr1e-5', repo_id='czhou578/jfk-f5tts-30epochs-b6000', repo_type='model')
 "
 ```
 
