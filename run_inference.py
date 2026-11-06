@@ -16,6 +16,12 @@ Usage:
 
     # Point at one checkpoint file, run on the CPU
     python run_inference.py --text "Hello." --ckpt_file checkpoints/jfk-f5tts-30epochs/model_last_ema.safetensors --device cpu
+
+    # Another reference clip from the dataset; the transcript comes from metadata.csv
+    python run_inference.py --text "Hello." --ref_clip jfk_dataset/wavs/jfk_00001.wav
+
+    # Reproducible output
+    python run_inference.py --text "Hello." --seed 7
 """
 
 import argparse
@@ -36,13 +42,13 @@ F5_REPO        = os.path.join(PROJECT_DIR, "F5-TTS")
 CKPT_DIR       = os.environ.get("JFK_CKPT_DIR", os.path.join(PROJECT_DIR, "checkpoints"))
 DATASET_DIR    = os.path.join(PROJECT_DIR, "jfk_dataset")
 
-# A short clean JFK clip to use as voice reference during inference
-# Pick a 3-10 second clip from your dataset that sounds clear and representative
+# A short clean JFK clip to use as voice reference during inference.
+# Pick a 3-10 second clip from the dataset that sounds clear and representative.
+# The script reads its transcript from metadata.csv unless --ref_text is given.
 REFERENCE_CLIP = os.path.join(DATASET_DIR, "wavs/jfk_00206.wav")
-REFERENCE_TEXT = "And I therefore want to commend the members of the Congress and the House and the Senate, the Chairman of the subcommittees,"
+METADATA_CSV   = os.path.join(DATASET_DIR, "metadata.csv")
 
-OUTPUT_DIR     = "./jfk_outputs"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+OUTPUT_DIR     = os.path.join(PROJECT_DIR, "jfk_outputs")
 
 
 def parse_args():
@@ -59,8 +65,10 @@ def parse_args():
     parser.add_argument("--ckpt_file",  default=None, help="Exact checkpoint file (.safetensors or .pt). Skips the search.")
     parser.add_argument("--device",     default="auto", choices=["auto", "cuda", "cpu"], help="Compute device (default: cuda if available, else cpu)")
     parser.add_argument("--ref_clip",   default=REFERENCE_CLIP, help="Path to reference WAV clip")
-    parser.add_argument("--ref_text",   default=REFERENCE_TEXT, help="Transcript of reference clip")
+    parser.add_argument("--ref_text",   default=None, help="Transcript of the reference clip (default: looked up in jfk_dataset/metadata.csv)")
     parser.add_argument("--output",     default="output.wav", help="Output filename (or prefix for multi-sentence)")
+    parser.add_argument("--output_dir", default=OUTPUT_DIR, help="Folder for the output files (default: jfk_outputs/ in the repo)")
+    parser.add_argument("--seed",       type=int, default=None, help="Random seed for reproducible output (default: a new random seed per sentence)")
     parser.add_argument("--nfe",        type=int, default=32, help="NFE steps (higher = better quality, slower)")
     parser.add_argument("--pause",      type=float, default=0.5, help="Pause in seconds between sentences (default: 0.5)")
     parser.add_argument("--split",      action="store_true", help="Save each sentence as a separate WAV file")
@@ -98,6 +106,25 @@ def read_text_file(filepath, mode="lines"):
         parts = re.split(r'(?<=[.!?])\s+', para)
         sentences.extend(s.strip() for s in parts if s.strip())
     return sentences
+
+
+def lookup_ref_text(ref_clip: str, metadata_csv: str = METADATA_CSV) -> str:
+    """Return the transcript of a dataset clip from the pipe-delimited metadata.csv.
+
+    Matches on the file name. Raises SystemExit with a hint when the clip is
+    not in the dataset, because a wrong transcript degrades the output.
+    """
+    clip_name = os.path.basename(ref_clip)
+    if os.path.isfile(metadata_csv):
+        with open(metadata_csv, "r", encoding="utf-8") as f:
+            for line in f:
+                name, sep, text = line.rstrip("\n").partition("|")
+                if sep and os.path.basename(name) == clip_name and text.strip():
+                    return text.strip()
+    raise SystemExit(
+        f"No transcript for {clip_name} in {metadata_csv}.\n"
+        f"    Pass --ref_text with the exact transcript of the reference clip."
+    )
 
 
 def find_checkpoint(ckpt_dir: str, step: str = None) -> str:
@@ -172,15 +199,25 @@ def main():
         sentences = read_text_file(args.file, mode=args.mode)
         source_label = f"File: {args.file} ({len(sentences)} units, mode={args.mode})"
     else:
-        sentences = [args.text]
+        sentences = [args.text.strip()] if args.text.strip() else []
         source_label = f"Text: {args.text}"
+    if not sentences:
+        raise SystemExit(f"No text to synthesize in {args.file or '--text'}.")
+
+    ref_text = args.ref_text if args.ref_text else lookup_ref_text(args.ref_clip)
+
+    # Output names: <base>.wav, and <base>_001.wav ... with --split
+    output_base = os.path.splitext(os.path.basename(args.output))[0]
+    os.makedirs(args.output_dir, exist_ok=True)
 
     print("=" * 50)
     print("  F5-TTS Inference — JFK Voice")
     print("=" * 50)
     print(f"  Input     : {source_label}")
     print(f"  Reference : {args.ref_clip}")
+    print(f"  Ref text  : {ref_text}")
     print(f"  NFE steps : {args.nfe}")
+    print(f"  Seed      : {args.seed if args.seed is not None else 'random'}")
 
     import sys
     sys.path.insert(0, os.path.join(F5_REPO, "src"))
@@ -217,7 +254,6 @@ def main():
     # Generate audio for each sentence
     all_wavs = []
     sr = None
-    output_base = args.output.replace(".wav", "")
 
     for i, sentence in enumerate(sentences):
         label = f"[{i+1}/{len(sentences)}]" if len(sentences) > 1 else ""
@@ -225,17 +261,19 @@ def main():
 
         wav, sr, _ = tts.infer(
             ref_file=args.ref_clip,
-            ref_text=args.ref_text,
+            ref_text=ref_text,
             gen_text=sentence,
             nfe_step=args.nfe,
             cross_fade_duration=0.15,
             speed=1.0,
+            seed=args.seed,
         )
+        print(f"    seed: {tts.seed}")
         all_wavs.append(wav)
 
         # Save individual files if --split
         if args.split and len(sentences) > 1:
-            split_path = os.path.join(OUTPUT_DIR, f"{output_base}_{i+1:03d}.wav")
+            split_path = os.path.join(args.output_dir, f"{output_base}_{i+1:03d}.wav")
             sf.write(split_path, wav, sr)
             print(f"    → Saved: {split_path}")
 
@@ -254,7 +292,7 @@ def main():
         final_wav = all_wavs[0]
 
     # Save combined output
-    output_path = os.path.join(OUTPUT_DIR, args.output)
+    output_path = os.path.join(args.output_dir, f"{output_base}.wav")
     sf.write(output_path, final_wav, sr)
 
     print(f"\n{'=' * 50}")
