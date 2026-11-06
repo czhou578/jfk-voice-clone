@@ -364,14 +364,11 @@ See `EXPERIMENTATION_PLAN.md` for the experiment matrix and `EXPERIMENTATION_RES
 
 ### The reference clip
 
-F5-TTS clones a voice from one reference clip plus its exact transcript. The default is `jfk_dataset/wavs/jfk_00206.wav`, an 8.2-second clip, with its transcript from `metadata.csv`:
+F5-TTS clones a voice from one reference clip plus its exact transcript. The default is `jfk_dataset/wavs/jfk_00206.wav`, an 8.2-second clip. The script reads the transcript from `jfk_dataset/metadata.csv` by file name.
 
-```python
-REFERENCE_CLIP = os.path.join(DATASET_DIR, "wavs/jfk_00206.wav")
-REFERENCE_TEXT = "And I therefore want to commend the members of the Congress and the House and the Senate, the Chairman of the subcommittees,"
-```
+To use another clip from the dataset, pass `--ref_clip` alone. Pick a clean clip of 3–10 seconds from `jfk_dataset/wavs/`. For a clip outside the dataset, pass `--ref_text` with its exact transcript too. A wrong transcript degrades the output.
 
-To use another clip, pass `--ref_clip` and `--ref_text` together. Pick a clean clip of 3–10 seconds from `jfk_dataset/wavs/` and copy its transcript from `metadata.csv` exactly. A wrong transcript degrades the output.
+Pass `--seed` to make the output reproducible. Without it, each sentence gets a new random seed, and the script prints the seed it used. Use the same seed when you compare checkpoints by ear.
 
 ### Where the script looks for checkpoints
 
@@ -395,8 +392,10 @@ JFK_CKPT_DIR=/mnt/models/jfk .venv/bin/python run_inference.py --text "..."
 | `--ckpt_file` | | One checkpoint file; skips the search |
 | `--device` | `auto` | `cuda` if available, else `cpu`; or force one |
 | `--ref_clip` | `jfk_dataset/wavs/jfk_00206.wav` | Reference WAV clip |
-| `--ref_text` | *(see script)* | Exact transcript of the reference clip |
-| `--output` | `output.wav` | Output filename inside `jfk_outputs/` |
+| `--ref_text` | from `metadata.csv` | Exact transcript of the reference clip; needed for clips outside the dataset |
+| `--output` | `output.wav` | Output filename inside the output folder |
+| `--output_dir` | `jfk_outputs/` | Output folder |
+| `--seed` | random | Random seed for reproducible output |
 | `--nfe` | `32` | Flow-matching steps. Higher is better and slower; 64 for final renders |
 | `--pause` | `0.5` | Silence in seconds between sentences |
 | `--split` | off | Also save each sentence as its own file, `name_001.wav`, `name_002.wav`, ... |
