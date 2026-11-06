@@ -1,28 +1,170 @@
 # JFK Voice Clone — F5-TTS Fine-Tuning Pipeline
 
-Clone JFK's voice using [F5-TTS](https://github.com/SWivid/F5-TTS). This repo contains everything needed to go from a raw YouTube speech to a fully fine-tuned TTS model that speaks in JFK's voice.
+Clone JFK's voice with [F5-TTS](https://github.com/SWivid/F5-TTS). This repo holds the full path from a raw YouTube speech to a fine-tuned TTS model, plus the script that reads new text in JFK's voice.
+
+The fine-tuned checkpoints are on HuggingFace, so you do not need to train again. To generate speech, follow [Generate speech now](#generate-speech-now) and skip the training phases.
+
+Last verified on 2026-11-05 on a DGX Spark (GB10, aarch64, CUDA 13) with Python 3.11 and torch 2.14.1+cu130.
 
 ## Overview
 
-The pipeline has **three phases**:
+The pipeline has three phases:
 
 | Phase | Script | What it does |
 |-------|--------|--------------|
-| **1. Dataset Preparation** | `prepare_tts_dataset.py` | Downloads audio → denoises → transcribes → slices into labeled clips |
-| **2. Fine-Tuning** | `finetune_ft_tts.sh` | Converts dataset for F5-TTS, configures training, and launches fine-tuning |
-| **3. Inference** | `run_inference.py` | Synthesizes new speech using your fine-tuned model |
+| 1. Dataset preparation | `prepare_tts_dataset.py` | Downloads audio, denoises, transcribes, and slices into labeled clips |
+| 2. Fine-tuning | `finetune_ft_tts.sh` | Converts the dataset for F5-TTS, configures training, and launches fine-tuning |
+| 3. Inference | `run_inference.py` | Reads new text with the fine-tuned model |
+
+Two helper scripts support phase 3:
+
+| Script | What it does |
+|--------|--------------|
+| `slim_checkpoint.py` | Extracts the 1.3 GB inference weights from a 5 GB training checkpoint |
+| `update_nb.py` | Updates the dependency cell of the Colab notebook |
+
+---
+
+## Generate speech now
+
+This is the short path. It takes about 15 minutes, most of it downloads.
+
+### Step 1 — Clone with the submodule
+
+```bash
+git clone --recurse-submodules https://github.com/czhou578/jfk-voice-clone.git
+cd jfk-voice-clone
+```
+
+The `--recurse-submodules` flag pulls the [F5-TTS fork](https://github.com/czhou578/F5-TTS) into `F5-TTS/`. The fork is upstream 1.1.17 plus three small commits for training.
+
+### Step 2 — Pull the Git LFS files
+
+The dataset, the reference clips, and the sample outputs are Git LFS files. Without this step they are 130-byte pointer files, and inference fails on the reference clip.
+
+With sudo:
+
+```bash
+sudo apt-get install -y git-lfs
+```
+
+Without sudo, install the release binary for your user:
+
+```bash
+gh release download -R git-lfs/git-lfs --pattern 'git-lfs-linux-arm64-*.tar.gz'   # use amd64 on x86
+tar xzf git-lfs-linux-arm64-*.tar.gz && cp git-lfs-*/git-lfs ~/.local/bin/
+```
+
+Then, inside the repo:
+
+```bash
+git lfs install --local
+git lfs pull          # about 712 MB
+```
+
+### Step 3 — Create the Python environment
+
+Use Python 3.11 and the torch wheels that match your CUDA driver. The three torch packages must come from the same index, or audio loading fails.
+
+```bash
+uv venv .venv --python 3.11
+uv pip install --python .venv/bin/python \
+    --index-url https://download.pytorch.org/whl/cu130 torch torchaudio torchcodec
+uv pip install --python .venv/bin/python -e ./F5-TTS
+```
+
+Pick the index for your driver: `cu130` for CUDA 13 (DGX Spark), `cu128` or `cu126` for CUDA 12 on x86. PyPI torch wheels for aarch64 do not support the GB10.
+
+Check the result:
+
+```bash
+.venv/bin/python -c "import torch, f5_tts; print(torch.__version__, torch.cuda.is_available())"
+```
+
+### Step 4 — Download a checkpoint
+
+The fine-tuned checkpoints are on HuggingFace under [czhou578](https://huggingface.co/czhou578). Each repo holds a 5 GB training checkpoint and the 1.3 GB base model it started from.
+
+| HuggingFace repo | Epochs | Batch (frames) | Final loss | Note |
+|------------------|--------|----------------|------------|------|
+| `czhou578/jfk-voice-clone-f5tts` | 10 | 4000 | ~0.70 | Baseline |
+| `czhou578/jfk-f5tts-20epochs` | 20 | 4000 | 0.644 | |
+| `czhou578/jfk-f5tts-30epochs` | 30 | 4000 | 0.602 | Best checkpoint on HuggingFace |
+
+The 30-epoch, batch 6000 run reached loss 0.487 (see `EXPERIMENTATION_RESULTS.md`). It is the default in `finetune_ft_tts.sh`, but no upload of it exists on HuggingFace.
+
+```bash
+.venv/bin/python -c "
+from huggingface_hub import hf_hub_download
+hf_hub_download('czhou578/jfk-f5tts-30epochs', 'model_last.pt', local_dir='checkpoints/jfk-f5tts-30epochs')
+"
+```
+
+### Step 5 — Slim the checkpoint
+
+A training checkpoint carries the optimizer state, and the loader reads the whole 5 GB file into memory. The slim script keeps only the EMA weights that inference uses.
+
+```bash
+.venv/bin/python slim_checkpoint.py checkpoints/jfk-f5tts-30epochs/model_last.pt
+# writes checkpoints/jfk-f5tts-30epochs/model_last_ema.safetensors (1.26 GiB)
+```
+
+The script memory-maps the input, so it needs about 1.8 GB of RAM and a few seconds. You can delete the 5 GB `.pt` file afterwards.
+
+### Step 6 — Generate speech
+
+```bash
+.venv/bin/python run_inference.py --text "Ask not what your country can do for you, ask what you can do for your country."
+```
+
+The output lands in `jfk_outputs/output.wav` at 24 kHz. The script finds the slim checkpoint under `checkpoints/` on its own.
+
+Read a whole speech from a file. Use `--mode sentences` for prose and `--mode lines` for lyrics:
+
+```bash
+.venv/bin/python run_inference.py --file jfk_undelivered_speech.txt --mode sentences --output undelivered.wav
+.venv/bin/python run_inference.py --file taylor_swift_lyrics.txt --mode lines --output blank_space.wav
+```
+
+Measured on the DGX Spark for one 5-second sentence at 32 NFE steps:
+
+| Device | Wall time | Peak host memory |
+|--------|-----------|------------------|
+| GPU (GB10) | 26 s | 2.6 GB |
+| CPU (20 cores) | 115 s | 3.8 GB |
+
+Both outputs transcribe word for word to the input text.
 
 ---
 
 ## Prerequisites
 
-- **GPU**: NVIDIA GPU with ≥24 GB VRAM (tested on RTX 4090). Training will also work on cloud GPUs (RunPod, etc.)
-- **OS**: Linux (Ubuntu recommended). The training scripts use `apt-get` and bash.
-- **Python**: 3.10 or 3.11
-- **CUDA**: 12.1+
-- **Storage**: ≥40 GB free (RunPod 40 GB volume recommended — smaller volumes will run out of space)
+### For inference
 
-> **Lessons learned:** RunPod with a 40 GB volume is the minimum viable setup. Smaller storage will cause failures during training.
+- Python 3.11 (3.10 also works with upstream F5-TTS)
+- `uv` or `pip`, `ffmpeg`, `git-lfs`
+- A CUDA GPU with 3 GB free, or a CPU with 4 GB of RAM free
+- 8 GB of disk for the environment and one checkpoint
+
+### For training (phases 1 and 2)
+
+- **GPU**: NVIDIA GPU with at least 24 GB VRAM (tested on RTX 4090 and RTX 4000 Ada on RunPod)
+- **OS**: Linux. The training script uses `apt-get` and bash and expects the repo at `/workspace/jfk-voice-clone`.
+- **CUDA**: 12.1 or later. The script pins torch 2.4.0+cu121 for x86 RunPod images.
+- **Storage**: at least 40 GB free. A RunPod 40 GB volume is the minimum that works.
+
+---
+
+## Running beside another GPU process
+
+On the DGX Spark, the vLLM server holds about 111 GB of the 121 GB unified memory. Inference still fits, but run it inside a memory-capped scope so that the kernel's OOM killer picks the TTS process and not the server:
+
+```bash
+systemd-run --user --scope -p MemoryMax=8G -- choom -n 1000 -- \
+    .venv/bin/python run_inference.py --text "Hello from the Oval Office."
+```
+
+Add `--device cpu` to keep the GPU untouched. CPU inference takes about four times longer.
 
 ---
 
@@ -238,54 +380,57 @@ F5-TTS/ckpts/F5TTS_Base/
 
 ---
 
-## Phase 3 — Inference
+## Phase 3 — Inference in detail
 
-Generate speech in JFK's voice using your fine-tuned model.
+[Generate speech now](#generate-speech-now) covers the normal path. This section lists every option.
 
-### Step 3.1 — Pick a reference clip
+### The reference clip
 
-The inference script needs a short (3–10 second), clean audio clip of JFK as a voice reference. By default, it uses `jfk_dataset/wavs/jfk_00001.wav`.
-
-Open `run_inference.py` and verify / update these constants if needed:
+F5-TTS clones a voice from one reference clip plus its exact transcript. The default is `jfk_dataset/wavs/jfk_00206.wav`, an 8.2-second clip, with its transcript from `metadata.csv`:
 
 ```python
-REFERENCE_CLIP = os.path.join(DATASET_DIR, "wavs/jfk_00001.wav")
-REFERENCE_TEXT = "We choose to go to the Moon in this decade and do the other things."
+REFERENCE_CLIP = os.path.join(DATASET_DIR, "wavs/jfk_00206.wav")
+REFERENCE_TEXT = "And I therefore want to commend the members of the Congress and the House and the Senate, the Chairman of the subcommittees,"
 ```
 
-> **Important:** The `REFERENCE_TEXT` must be an accurate transcript of the reference clip. Pick a clip from your dataset and copy its transcript from `metadata.csv`.
+To use another clip, pass `--ref_clip` and `--ref_text` together. Pick a clean clip of 3–10 seconds from `jfk_dataset/wavs/` and copy its transcript from `metadata.csv` exactly. A wrong transcript degrades the output.
 
-### Step 3.2 — Run inference
+### Where the script looks for checkpoints
 
-Basic usage (uses the latest checkpoint automatically):
+The script searches `checkpoints/` recursively. It skips `backup` folders and `pretrained_*` files. It accepts `.safetensors` files from `slim_checkpoint.py` and full `.pt` training checkpoints. With no `--checkpoint`, it prefers `model_last_ema.safetensors`, then `model_last.pt`, then the highest numbered `model_<step>` file.
+
+Set `JFK_CKPT_DIR` to search another folder, for example on a RunPod box:
+
 ```bash
-python run_inference.py --text "Ask not what your country can do for you."
+JFK_CKPT_DIR=/root/F5-TTS-ckpts python run_inference.py --text "..."
 ```
 
-Use a specific checkpoint:
-```bash
-python run_inference.py \
-    --text "We choose to go to the Moon." \
-    --checkpoint 5000
-```
-
-**All available arguments:**
+### All arguments
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--text` | *(required)* | Text to synthesize |
-| `--checkpoint` | latest | Checkpoint step number (e.g. `5000`) |
-| `--ref_clip` | `jfk_dataset/wavs/jfk_00001.wav` | Path to reference WAV clip |
-| `--ref_text` | *(see script)* | Transcript of reference clip |
-| `--output` | `output.wav` | Output filename |
-| `--nfe` | `32` | NFE steps (higher = better quality, slower) |
+| `--text` | | Text to synthesize. Use this or `--file` |
+| `--file` | | Text file to synthesize |
+| `--mode` | `lines` | `lines`: one TTS call per line, for lyrics. `sentences`: split on `.!?`, for prose |
+| `--checkpoint` | latest | Checkpoint step number, for example `6000` |
+| `--ckpt_dir` | `./checkpoints` | Folder to search; `JFK_CKPT_DIR` also sets it |
+| `--ckpt_file` | | One checkpoint file; skips the search |
+| `--device` | `auto` | `cuda` if available, else `cpu`; or force one |
+| `--ref_clip` | `jfk_dataset/wavs/jfk_00206.wav` | Reference WAV clip |
+| `--ref_text` | *(see script)* | Exact transcript of the reference clip |
+| `--output` | `output.wav` | Output filename inside `jfk_outputs/` |
+| `--nfe` | `32` | Flow-matching steps. Higher is better and slower; 64 for final renders |
+| `--pause` | `0.5` | Silence in seconds between sentences |
+| `--split` | off | Also save each sentence as its own file, `name_001.wav`, `name_002.wav`, ... |
 
-### Step 3.3 — Find your output
+### Sample inputs and outputs
 
-Generated audio is saved to:
-```
-jfk_outputs/output.wav
-```
+| File | Use |
+|------|-----|
+| `jfk_undelivered_speech.txt` | The Dallas Trade Mart speech; use `--mode sentences` |
+| `covfefe_speech.txt` | The 2025 inaugural address, prose; use `--mode sentences` |
+| `taylor_swift_lyrics.txt` | "Blank Space" lyrics; use `--mode lines` |
+| `jfk_outputs/*.wav` | Outputs from the experiment runs, named by run settings |
 
 ---
 
@@ -311,35 +456,6 @@ jfk-voice-clone/
 └── jfk_dataset/                 # Generated dataset (tracked via Git LFS)
     ├── metadata.csv             # ~1150 clips, pipe-delimited
     └── wavs/                    # Audio clips (3–15 sec each)
-```
-
----
-
-## Quick Start (TL;DR)
-
-```bash
-# 1. Clone
-git clone --recurse-submodules https://github.com/czhou578/jfk-voice-clone.git
-cd jfk-voice-clone
-
-# 2. Install deps
-sudo apt-get update && sudo apt-get install -y pkg-config ffmpeg git-lfs \
-    libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev \
-    libavfilter-dev libswscale-dev libswresample-dev
-git lfs install && git lfs pull
-pip install -r requirements.txt
-
-# 3. Build dataset (or use the included one)
-python prepare_tts_dataset.py \
-    --url "https://www.youtube.com/watch?v=YOUR_VIDEO_ID" \
-    --output ./jfk_dataset --speaker jfk --model large-v2
-
-# 4. Fine-tune (edit paths in script first!)
-chmod +x finetune_ft_tts.sh
-./finetune_ft_tts.sh
-
-# 5. Generate speech
-python run_inference.py --text "Ask not what your country can do for you."
 ```
 
 ---
