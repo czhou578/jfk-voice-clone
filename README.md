@@ -410,6 +410,14 @@ JFK_CKPT_DIR=/mnt/models/jfk .venv/bin/python run_inference.py --text "..."
 
 ---
 
+## Continuous integration
+
+Every pull request runs the static checks in `.github/workflows/ci.yml`: a Python syntax and undefined-name check on the scripts in the repo root, and a bash syntax check on the training script. The checks do not fetch the LFS files or the submodule, so they finish in about a minute.
+
+Dependabot opens a pull request each week when a GitHub Action or a pinned pip package has a newer version. When the checks pass on a Dependabot pull request, the workflow enables auto-merge, and GitHub squash-merges it. The repo setting "Allow auto-merge" must stay on for this. The F5-TTS submodule is pinned by hand and is not updated by Dependabot.
+
+---
+
 ## Repository Structure
 
 ```
@@ -421,6 +429,8 @@ jfk-voice-clone/
 ├── .gitattributes               # Git LFS rules: *.wav, *.pt, *.safetensors, jfk_dataset/**
 ├── .gitignore                   # Ignores .venv/ and checkpoints/
 ├── .gitmodules                  # F5-TTS submodule reference
+├── .github/dependabot.yml       # Dependabot: weekly checks for GitHub Actions and pip updates
+├── .github/workflows/ci.yml     # CI: static checks on every PR; auto-merges Dependabot PRs that pass
 │
 ├── prepare_tts_dataset.py       # Phase 1: dataset preparation pipeline
 ├── prepare_tts_colab.ipynb      # Phase 1: Colab notebook version

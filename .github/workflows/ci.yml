@@ -1,0 +1,52 @@
+# Static checks on every pull request and on pushes to master.
+# Dependabot pull requests merge on their own once the checks pass.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Syntax errors and undefined names in the project's own scripts.
+      # The F5-TTS submodule is not checked out here and is not checked.
+      - name: Python syntax and undefined names
+        run: |
+          python -m py_compile *.py
+          pip install ruff
+          ruff check --select E9,F63,F7,F82 *.py
+
+      - name: Shell syntax
+        run: bash -n finetune_ft_tts.sh
+
+  dependabot-auto-merge:
+    name: Auto-merge Dependabot pull request
+    # Runs only after the checks job succeeded, and only for Dependabot.
+    needs: checks
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # Auto-merge squash-merges the pull request as soon as GitHub reports it
+      # mergeable, including any required checks from branch protection.
+      # The repo setting "Allow auto-merge" must be on.
+      - name: Enable auto-merge
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

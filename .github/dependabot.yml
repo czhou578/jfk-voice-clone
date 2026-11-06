@@ -1,0 +1,14 @@
+# Dependabot opens a pull request when a newer version of a dependency exists.
+# The CI workflow (.github/workflows/ci.yml) merges those pull requests when
+# the checks pass. The F5-TTS submodule is pinned by hand and is not listed here.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
