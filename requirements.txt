@@ -7,4 +7,4 @@
 yt-dlp==2026.7.4
 resemble-enhance==0.0.1
 whisperx==3.2.0
-soundfile==0.12.1
+soundfile==0.14.0
