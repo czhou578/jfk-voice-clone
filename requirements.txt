@@ -4,7 +4,7 @@
 #
 # System dependencies required for PyAV:
 # sudo apt-get update && sudo apt-get install -y pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libavfilter-dev libswscale-dev libswresample-dev
-yt-dlp==2026.7.4
+yt-dlp==2026.10.26
 resemble-enhance==0.0.1
 whisperx==3.2.0
 soundfile==0.14.0
